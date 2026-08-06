@@ -130,9 +130,9 @@ jobs:
         if [ -n "$RAW_NAME" ]; then
           # sanitize: keep alnum, dot, dash, underscore only
           CLEAN_NAME=$(echo "$RAW_NAME" | sed 's/[^A-Za-z0-9._-]/-/g')
-          KERNEL_NAME_TAG="${CLEAN_NAME}-${AUTO_STAMP}"
+          KERNEL_NAME_TAG="${CLEAN_NAME}-RE"
         else
-          KERNEL_NAME_TAG="Mahirooo-${AUTO_STAMP}"
+          KERNEL_NAME_TAG="Mahirooo"
         fi
         echo "KERNEL_NAME_TAG=${KERNEL_NAME_TAG}" >> $GITHUB_ENV
         echo "Kernel name tag: ${KERNEL_NAME_TAG}"

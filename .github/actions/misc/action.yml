@@ -35,4 +35,5 @@ runs:
           CONFIG_UPROBES=y
           CONFIG_UPROBE_EVENTS=y
           CONFIG_FUSE_BPF=y
+          CONFIG_ADIOS=y
           
