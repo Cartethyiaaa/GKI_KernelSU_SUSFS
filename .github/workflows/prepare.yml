@@ -3,8 +3,8 @@ name: Prepare and Build
 on:
   workflow_call:
     inputs:
-      config_file:
-        description: "Path to the JSON config file"
+      config_key:
+        description: "Key into .github/config/custom-sources.json (e.g. '5.10' or '6.12')"
         required: true
         type: string
       feature_set:
@@ -21,77 +21,71 @@ on:
         required: false
         type: string
         default: ""
+      kernel_name:
+        description: "Custom kernel name (empty = auto, from build time)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
-  generate-matrix:
+  resolve-source:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.final.outputs.matrix }}
+      version: ${{ steps.resolve.outputs.version }}
+      android_version: ${{ steps.resolve.outputs.android_version }}
+      kernel_version: ${{ steps.resolve.outputs.kernel_version }}
+      sublevel: ${{ steps.resolve.outputs.sublevel }}
+      os_patch_level: ${{ steps.resolve.outputs.os_patch_level }}
+      custom_repo: ${{ steps.resolve.outputs.custom_repo }}
+      custom_branch: ${{ steps.resolve.outputs.custom_branch }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Read Config and Build Final Matrix
-        id: final
+      - name: Resolve Custom Kernel Source
+        id: resolve
         shell: bash
         run: |
-          if [ ! -f "${{ inputs.config_file }}" ]; then
-            echo "Error: Config file not found: ${{ inputs.config_file }}"
+          set -euo pipefail
+          CONFIG_FILE=".github/config/custom-sources.json"
+          KEY="${{ inputs.config_key }}"
+
+          TARGET=$(jq -c --arg key "$KEY" '.targets[$key]' "$CONFIG_FILE")
+          if [ "$TARGET" = "null" ] || [ -z "$TARGET" ]; then
+            echo "ERROR: unknown config_key '$KEY' (expected one of: $(jq -r '.targets | keys | join(", ")' "$CONFIG_FILE"))" >&2
             exit 1
           fi
 
-          CONFIG_JSON=$(cat "${{ inputs.config_file }}" | jq -c .)
+          ANDROID_VERSION=$(echo "$TARGET" | jq -r '.android_version')
+          KERNEL_VERSION=$(echo "$TARGET" | jq -r '.kernel_version')
+          SUBLEVEL=$(echo "$TARGET" | jq -r '.manifest_sublevel')
+          OS_PATCH_LEVEL=$(echo "$TARGET" | jq -r '.manifest_os_patch_level')
+          CUSTOM_REPO=$(echo "$TARGET" | jq -r '.repo')
+          CUSTOM_BRANCH=$(echo "$TARGET" | jq -r '.branch')
+          VERSION="${ANDROID_VERSION}-${KERNEL_VERSION}"
 
-          # Build { "include": [ {android_version:..., kernel_version:..., sublevel:..., os_patch_level:..., variant: ...}, ... ] }
-          # Always include Normal, and add any explicit per-item variant from the config.
-          FINAL=$(jq -cn \
-            --argjson cfg "$CONFIG_JSON" '
-            ($cfg.version | split("-")) as $version_parts
-            | {
-              include: (
-                [
-                  $cfg.include[] as $item
-                  | {
-                      version: $cfg.version,
-                      android_version: $version_parts[0],
-                      kernel_version: $version_parts[1],
-                      sublevel: $item.sublevel,
-                      os_patch_level: $item.date,
-                      variant: "Normal"
-                    }
-                ]
-                + [
-                  $cfg.include[] as $item
-                  | select($item.variant != null)
-                  | {
-                      version: $cfg.version,
-                      android_version: $version_parts[0],
-                      kernel_version: $version_parts[1],
-                      sublevel: $item.sublevel,
-                      os_patch_level: $item.date,
-                      variant: $item.variant
-                    }
-                ]
-                | unique_by([.android_version, .kernel_version, .sublevel, .os_patch_level, .variant])
-              )
-            }')
-
-          echo "matrix=$FINAL" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "android_version=$ANDROID_VERSION" >> "$GITHUB_OUTPUT"
+          echo "kernel_version=$KERNEL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "sublevel=$SUBLEVEL" >> "$GITHUB_OUTPUT"
+          echo "os_patch_level=$OS_PATCH_LEVEL" >> "$GITHUB_OUTPUT"
+          echo "custom_repo=$CUSTOM_REPO" >> "$GITHUB_OUTPUT"
+          echo "custom_branch=$CUSTOM_BRANCH" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: generate-matrix
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    needs: resolve-source
     uses: ./.github/workflows/build.yml
     with:
-      version: ${{ matrix.version }}
-      android_version: ${{ matrix.android_version }}
-      kernel_version: ${{ matrix.kernel_version }}
-      sublevel: ${{ matrix.sublevel }}
-      os_patch_level: ${{ matrix.os_patch_level }}
-      variant: ${{ matrix.variant }}
+      version: ${{ needs.resolve-source.outputs.version }}
+      android_version: ${{ needs.resolve-source.outputs.android_version }}
+      kernel_version: ${{ needs.resolve-source.outputs.kernel_version }}
+      sublevel: ${{ needs.resolve-source.outputs.sublevel }}
+      os_patch_level: ${{ needs.resolve-source.outputs.os_patch_level }}
+      variant: "Normal"
       feature_set: ${{ inputs.feature_set }}
       ksu_branch: ${{ inputs.ksu_branch }}
       susfs_commit: ${{ inputs.susfs_commit }}
+      custom_repo: ${{ needs.resolve-source.outputs.custom_repo }}
+      custom_branch: ${{ needs.resolve-source.outputs.custom_branch }}
+      kernel_name: ${{ inputs.kernel_name }}
     secrets: inherit

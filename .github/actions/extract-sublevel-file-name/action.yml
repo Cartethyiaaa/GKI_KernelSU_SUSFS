@@ -16,6 +16,11 @@ inputs:
   sublevel:
     required: true
     type: string
+  kernel_name_tag:
+    description: 'Custom kernel name tag to use in the artifact file name (falls back to os_patch_level if empty)'
+    required: false
+    type: string
+    default: ''
 outputs:
   file_name:
     value: ${{ steps.extract.outputs.file_name }}
@@ -33,12 +38,18 @@ runs:
         SUBLEVEL="${{ inputs.sublevel }}"
         if [ -f "${{ github.workspace }}/kernel/common/Makefile" ]; then
           EXTRACTED="$(grep '^SUBLEVEL = ' "${{ github.workspace }}/kernel/common/Makefile" | awk '{print $3}')"
-          if [ "${{ inputs.os_patch_level }}" = "lts" ] && [ -n "$EXTRACTED" ]; then
+          if [ -n "$EXTRACTED" ]; then
             SUBLEVEL="$EXTRACTED"
           fi
         fi
 
-        FILE_NAME="${{ inputs.kernel_version }}.${SUBLEVEL}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}"
+        TAG="${{ inputs.kernel_name_tag }}"
+        if [ -n "$TAG" ]; then
+          FILE_NAME="${{ inputs.kernel_version }}.${SUBLEVEL}-${{ inputs.android_version }}-${TAG}"
+        else
+          FILE_NAME="${{ inputs.kernel_version }}.${SUBLEVEL}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}"
+        fi
+
         # Append variant only when it's provided and not the default 'Normal'
         if [ -n "${{ inputs.variant }}" ] && [ "${{ inputs.variant }}" != "Normal" ]; then
           FILE_NAME="${FILE_NAME}-${{ inputs.variant }}"

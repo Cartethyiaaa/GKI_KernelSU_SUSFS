@@ -15,18 +15,13 @@ on:
           - Pre-Release
           - Release
         default: Action
-      kernel_build_version:
-        description: "Kernel Version"
+      kernel_source:
+        description: "Kernel Source"
         type: choice
         options:
           - All
-          - android12-5.10
-          - android13-5.10
-          - android13-5.15
-          - android14-5.15
-          - android14-6.1
-          - android15-6.6
-          - android16-6.12
+          - "5.10"
+          - "6.12"
         default: All
       feature_set:
         description: "Feature Set"
@@ -49,38 +44,18 @@ on:
         type: string
         required: false
         default: ""
-      susfs_commit_android12-5-10:
-        description: "SUSFS commit for android12-5.10 (empty = latest branch tip)"
+      susfs_commit_5_10:
+        description: "SUSFS commit for the 5.10 build (empty = latest branch tip)"
         type: string
         required: false
         default: ""
-      susfs_commit_android13-5-10:
-        description: "SUSFS commit for android13-5.10 (empty = latest branch tip)"
+      susfs_commit_6_12:
+        description: "SUSFS commit for the 6.12 build (empty = latest branch tip)"
         type: string
         required: false
         default: ""
-      susfs_commit_android13-5-15:
-        description: "SUSFS commit for android13-5.15 (empty = latest branch tip)"
-        type: string
-        required: false
-        default: ""
-      susfs_commit_android14-5-15:
-        description: "SUSFS commit for android14-5.15 (empty = latest branch tip)"
-        type: string
-        required: false
-        default: ""
-      susfs_commit_android14-6-1:
-        description: "SUSFS commit for android14-6.1 (empty = latest branch tip)"
-        type: string
-        required: false
-        default: ""
-      susfs_commit_android15-6-6:
-        description: "SUSFS commit for android15-6.6 (empty = latest branch tip)"
-        type: string
-        required: false
-        default: ""
-      susfs_commit_android16-6-12:
-        description: "SUSFS commit for android16-6.12 (empty = latest branch tip)"
+      kernel_name:
+        description: "Custom kernel name (empty = auto-generated from the build time, e.g. Mahirooo-20260806-1530)"
         type: string
         required: false
         default: ""
@@ -118,81 +93,30 @@ jobs:
           retention-days: 1
           if-no-files-found: warn
 
-  build-android12-5-10:
+  build-5-10:
+    name: "Build 5.10 (android12-5.10)"
     needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android12-5.10') }}
+    if: ${{ !inputs.test_release_notes && (inputs.kernel_source == 'All' || inputs.kernel_source == '5.10') }}
     uses: ./.github/workflows/prepare.yml
     with:
-      config_file: .github/config/android12-5.10.json
+      config_key: "5.10"
       feature_set: ${{ inputs.feature_set || 'FULL' }}
       ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android12-5-10 }}
+      susfs_commit: ${{ inputs.susfs_commit_5_10 }}
+      kernel_name: ${{ inputs.kernel_name }}
     secrets: inherit
 
-  build-android13-5-10:
+  build-6-12:
+    name: "Build 6.12"
     needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android13-5.10') }}
+    if: ${{ !inputs.test_release_notes && (inputs.kernel_source == 'All' || inputs.kernel_source == '6.12') }}
     uses: ./.github/workflows/prepare.yml
     with:
-      config_file: .github/config/android13-5.10.json
+      config_key: "6.12"
       feature_set: ${{ inputs.feature_set || 'FULL' }}
       ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android13-5-10 }}
-    secrets: inherit
-
-  build-android13-5-15:
-    needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android13-5.15') }}
-    uses: ./.github/workflows/prepare.yml
-    with:
-      config_file: .github/config/android13-5.15.json
-      feature_set: ${{ inputs.feature_set || 'FULL' }}
-      ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android13-5-15 }}
-    secrets: inherit
-
-  build-android14-5-15:
-    needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android14-5.15') }}
-    uses: ./.github/workflows/prepare.yml
-    with:
-      config_file: .github/config/android14-5.15.json
-      feature_set: ${{ inputs.feature_set || 'FULL' }}
-      ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android14-5-15 }}
-    secrets: inherit
-
-  build-android14-6-1:
-    needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android14-6.1') }}
-    uses: ./.github/workflows/prepare.yml
-    with:
-      config_file: .github/config/android14-6.1.json
-      feature_set: ${{ inputs.feature_set || 'FULL' }}
-      ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android14-6-1 }}
-    secrets: inherit
-
-  build-android15-6-6:
-    needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android15-6.6') }}
-    uses: ./.github/workflows/prepare.yml
-    with:
-      config_file: .github/config/android15-6.6.json
-      feature_set: ${{ inputs.feature_set || 'FULL' }}
-      ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android15-6-6 }}
-    secrets: inherit
-
-  build-android16-6-12:
-    needs: prepare-ccache
-    if: ${{ !inputs.test_release_notes && (inputs.kernel_build_version == 'All' || inputs.kernel_build_version == 'android16-6.12') }}
-    uses: ./.github/workflows/prepare.yml
-    with:
-      config_file: .github/config/android16-6.12.json
-      feature_set: ${{ inputs.feature_set || 'FULL' }}
-      ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_commit: ${{ inputs.susfs_commit_android16-6-12 }}
+      susfs_commit: ${{ inputs.susfs_commit_6_12 }}
+      kernel_name: ${{ inputs.kernel_name }}
     secrets: inherit
 
   rej:
@@ -202,13 +126,8 @@ jobs:
       actions: read
       contents: read
     needs:
-    - build-android12-5-10
-    - build-android13-5-10
-    - build-android13-5-15
-    - build-android14-5-15
-    - build-android14-6-1
-    - build-android15-6-6
-    - build-android16-6-12
+    - build-5-10
+    - build-6-12
 
     steps:
     - name: Download Misc Artifacts
@@ -288,13 +207,8 @@ jobs:
       actions: write
       contents: read
     needs:
-    - build-android12-5-10
-    - build-android13-5-10
-    - build-android13-5-15
-    - build-android14-5-15
-    - build-android14-6-1
-    - build-android15-6-6
-    - build-android16-6-12
+    - build-5-10
+    - build-6-12
 
     steps:
     - name: Download All Build Summaries
@@ -309,15 +223,16 @@ jobs:
         {
           echo "# 📋 Build Summary — $(date -u '+%Y-%m-%d %H:%M UTC')"
           echo
+          echo "**Kernel Source:** ${{ inputs.kernel_source }}"
           echo "**Feature Set:** ${{ inputs.feature_set }}"
           echo "**KSU Branch:** ${{ inputs.ksu_branch || 'latest dev' }}"
+          echo "**Kernel Name:** ${{ inputs.kernel_name || 'auto (build time)' }}"
           echo
-          
+
           # Count successes and failures
           SUCCESS_COUNT=0
           FAIL_COUNT=0
-          
-          # Sort summaries so they appear in a consistent order
+
           for f in ./summaries/*.md; do
             [ -f "$f" ] || continue
             if grep -q "✅ Success" "$f"; then
@@ -326,7 +241,7 @@ jobs:
               FAIL_COUNT=$((FAIL_COUNT + 1))
             fi
           done
-          
+
           TOTAL=$((SUCCESS_COUNT + FAIL_COUNT))
           echo "**Results:** ${SUCCESS_COUNT}/${TOTAL} succeeded"
           if [ "$FAIL_COUNT" -gt 0 ]; then
@@ -335,8 +250,7 @@ jobs:
           echo
           echo "---"
           echo
-          
-          # Output each summary
+
           for f in ./summaries/*.md; do
             [ -f "$f" ] || continue
             cat "$f"
@@ -344,16 +258,11 @@ jobs:
             echo "---"
             echo
           done
-          
+
           echo
           echo "> **SUSFS Commits:**"
-          echo "> - android12-5.10: ${{ inputs.susfs_commit_android12-5-10 || 'latest' }}"
-          echo "> - android13-5.10: ${{ inputs.susfs_commit_android13-5-10 || 'latest' }}"
-          echo "> - android13-5.15: ${{ inputs.susfs_commit_android13-5-15 || 'latest' }}"
-          echo "> - android14-5.15: ${{ inputs.susfs_commit_android14-5-15 || 'latest' }}"
-          echo "> - android14-6.1: ${{ inputs.susfs_commit_android14-6-1 || 'latest' }}"
-          echo "> - android15-6.6: ${{ inputs.susfs_commit_android15-6-6 || 'latest' }}"
-          echo "> - android16-6.12: ${{ inputs.susfs_commit_android16-6-12 || 'latest' }}"
+          echo "> - 5.10: ${{ inputs.susfs_commit_5_10 || 'latest' }}"
+          echo "> - 6.12: ${{ inputs.susfs_commit_6_12 || 'latest' }}"
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: 🧹 Cleanup Summary Files
@@ -379,13 +288,8 @@ jobs:
     permissions:
       contents: write
     needs:
-    - build-android12-5-10
-    - build-android13-5-10
-    - build-android13-5-15
-    - build-android14-5-15
-    - build-android14-6-1
-    - build-android15-6-6
-    - build-android16-6-12
+    - build-5-10
+    - build-6-12
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -398,14 +302,14 @@ jobs:
         set -euo pipefail
 
         failed=0
-        current_type="${{ inputs.kernel_build_version }}"
+        current_source="${{ inputs.kernel_source }}"
 
         check_selected() {
           local target="$1"
           local job_name="$2"
           local result="$3"
-          
-          if [[ "$current_type" == "all" || "$current_type" == "$target" ]]; then
+
+          if [[ "$current_source" == "All" || "$current_source" == "$target" ]]; then
             if [[ "$result" != "success" ]]; then
               echo "Required job $job_name did not succeed (result: $result)"
               failed=1
@@ -413,13 +317,8 @@ jobs:
           fi
         }
 
-        check_selected "android12-5.10" "build-android12-5-10" "${{ needs.build-android12-5-10.result }}"
-        check_selected "android13-5.10" "build-android13-5-10" "${{ needs.build-android13-5-10.result }}"
-        check_selected "android13-5.15" "build-android13-5-15" "${{ needs.build-android13-5-15.result }}"
-        check_selected "android14-5.15" "build-android14-5-15" "${{ needs.build-android14-5-15.result }}"
-        check_selected "android14-6.1" "build-android14-6-1" "${{ needs.build-android14-6-1.result }}"
-        check_selected "android15-6.6" "build-android15-6-6" "${{ needs.build-android15-6-6.result }}"
-        check_selected "android16-6.12" "build-android16-6-12" "${{ needs.build-android16-6-12.result }}"
+        check_selected "5.10" "build-5-10" "${{ needs.build-5-10.result }}"
+        check_selected "6.12" "build-6-12" "${{ needs.build-6-12.result }}"
 
         if [[ "$failed" -ne 0 ]]; then
           exit 1
@@ -478,7 +377,6 @@ jobs:
       run: |
         set -euo pipefail
 
-        # Format release title: convert rN -> Release N
         if [[ "${NEW_TAG}" =~ ^r([0-9]+)$ ]]; then
           REV_NUM="${BASH_REMATCH[1]}"
           release_title="Release ${REV_NUM}"
@@ -499,7 +397,6 @@ jobs:
           KSU_INPUT="dev-susfs"
         fi
 
-        # Try as branch first, fall back to commit
         if git ls-remote --heads "$KSU_REPO" "$KSU_INPUT" | grep -q .; then
           echo "Cloning KernelSU-Next from branch: $KSU_INPUT"
           git clone --branch "$KSU_INPUT" "$KSU_REPO" /tmp/kernelsu-next
@@ -514,12 +411,10 @@ jobs:
           KSUN_COMMIT="$KSU_INPUT"
         fi
 
-        # Extract version info
         COMMITS_COUNT=$(git rev-list --count HEAD)
         BASE_VERSION=30000
         KSU_VERSION=$(expr $COMMITS_COUNT "+" $BASE_VERSION)
 
-        # Extract git tag
         KSU_GIT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "no-tag")
 
         MANAGER_RUN_ID=$(curl -fsSL "https://api.github.com/repos/pershoot/KernelSU-Next/actions/workflows/build-manager-ci.yml/runs?head_sha=${KSUN_COMMIT}" | jq -r '.workflow_runs[0].id // empty')
@@ -534,7 +429,6 @@ jobs:
         echo "KSU Git Tag: $KSU_GIT_TAG"
         echo "KSU Manager: $KSU_MANAGER"
 
-        # Export as environment for next step
         echo "KSUN_BRANCH=$KSU_INPUT" >> $GITHUB_ENV
         echo "KSUN_COMMIT=$KSUN_COMMIT" >> $GITHUB_ENV
         echo "KSU_COMMITS_COUNT=$COMMITS_COUNT" >> $GITHUB_ENV

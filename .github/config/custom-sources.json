@@ -1,0 +1,23 @@
+{
+  "_comment": "Custom kernel sources for Mahirooo's builder. 'repo'/'branch' is where the actual kernel/common source is pulled from (overrides the stock AOSP kernel/common after repo sync). 'manifest_sublevel'/'manifest_os_patch_level' only pin which AOSP manifest branch is used to fetch matching build tooling (clang toolchain, kernel/build scripts, bazel setup) for that kernel family - they do NOT affect which kernel source is built.",
+  "targets": {
+    "5.10": {
+      "label": "5.10 (android12-5.10)",
+      "repo": "https://github.com/Cartethyiaaa/android_kernel_common-5.10",
+      "branch": "android12-5.10",
+      "android_version": "android12",
+      "kernel_version": "5.10",
+      "manifest_sublevel": "252",
+      "manifest_os_patch_level": "2026-04"
+    },
+    "6.12": {
+      "label": "6.12",
+      "repo": "https://github.com/Cartethyiaaa/android_kernel_common-5.10",
+      "branch": "6.12",
+      "android_version": "android16",
+      "kernel_version": "6.12",
+      "manifest_sublevel": "38",
+      "manifest_os_patch_level": "2025-09"
+    }
+  }
+}

@@ -14,6 +14,14 @@ inputs:
   os_patch_level:
     description: 'OS patch level (e.g., 2024-01)'
     required: true
+  custom_repo:
+    description: 'Optional: git URL to use for kernel/common instead of the stock AOSP source'
+    required: false
+    default: ''
+  custom_branch:
+    description: 'Optional: branch of custom_repo to check out for kernel/common'
+    required: false
+    default: ''
 
 outputs:
   deprecated_branch:
@@ -80,6 +88,47 @@ runs:
           fi
           attempt=$((attempt+1))
         done
+
+    - name: Override kernel/common with custom source repo
+      if: ${{ inputs.custom_repo != '' }}
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel
+      run: |
+        set -euo pipefail
+        REPO_URL="${{ inputs.custom_repo }}"
+        REPO_BRANCH="${{ inputs.custom_branch }}"
+
+        if [ -z "$REPO_BRANCH" ]; then
+          echo "ERROR: custom_repo is set but custom_branch is empty" >&2
+          exit 1
+        fi
+
+        echo "::group::Overriding kernel/common with custom source"
+        echo "Repo:   $REPO_URL"
+        echo "Branch: $REPO_BRANCH"
+
+        rm -rf common
+
+        MAX_RETRIES=3
+        attempt=1
+        while [ $attempt -le $MAX_RETRIES ]; do
+          if git clone --branch "$REPO_BRANCH" --depth=1 "$REPO_URL" common; then
+            break
+          fi
+          echo "Clone attempt $attempt failed, retrying..."
+          rm -rf common
+          if [ $attempt -eq $MAX_RETRIES ]; then
+            echo "ERROR: failed to clone $REPO_URL ($REPO_BRANCH) after $MAX_RETRIES attempts" >&2
+            exit 1
+          fi
+          attempt=$((attempt+1))
+          sleep 10
+        done
+
+        cd common
+        echo "Custom kernel/common HEAD: $(git rev-parse HEAD)"
+        echo "Custom kernel/common branch: $REPO_BRANCH"
+        echo "::endgroup::"
 
     # --- Non-repo steps (commented out; we only use repo now) ---
     # - name: Download manifest.xml for branch (with deprecated fallback)
