@@ -78,12 +78,6 @@ jobs:
         rmz_version: "3.1.1"  # Required when rm_cmd is 'rmz'
         testing: false
 
-    - name: Setup more Swap (for LTO)
-      uses: thejerrybao/setup-swap-space@v1   # or pierotofy/set-swap-space
-      with:
-        swap-size-gb: 16          # 10-24 GB is common for heavy LTO
-        # swap-space-path: /mnt/swapfile   # optional
-
     - name: Setup Build Environment
       uses: ./.github/actions/setup-build-environment
       env:
