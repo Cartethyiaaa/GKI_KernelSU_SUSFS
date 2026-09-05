@@ -119,6 +119,19 @@ jobs:
       kernel_name: ${{ inputs.kernel_name }}
     secrets: inherit
 
+  build-cass:
+    name: "Build 6.12 (cass)"
+    needs: prepare-ccache
+    if: ${{ !inputs.test_release_notes }}
+    uses: ./.github/workflows/prepare.yml
+    with:
+      config_key: "cass"
+      feature_set: ${{ inputs.feature_set || 'FULL' }}
+      ksu_branch: ${{ inputs.ksu_branch }}
+      susfs_commit: ${{ inputs.susfs_commit_6_12 }}
+      kernel_name: ${{ inputs.kernel_name }}
+    secrets: inherit
+
   rej:
     if: ${{ !inputs.test_release_notes && always() }}
     runs-on: ubuntu-latest
@@ -128,6 +141,7 @@ jobs:
     needs:
     - build-5-10
     - build-6-12
+    - build-cass
 
     steps:
     - name: Download Misc Artifacts
@@ -209,6 +223,7 @@ jobs:
     needs:
     - build-5-10
     - build-6-12
+    - build-cass
 
     steps:
     - name: Download All Build Summaries
@@ -290,6 +305,7 @@ jobs:
     needs:
     - build-5-10
     - build-6-12
+    - build-cass
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -319,6 +335,12 @@ jobs:
 
         check_selected "5.10" "build-5-10" "${{ needs.build-5-10.result }}"
         check_selected "6.12" "build-6-12" "${{ needs.build-6-12.result }}"
+
+        # cass is always built regardless of kernel_source selection
+        if [[ "${{ needs.build-cass.result }}" != "success" ]]; then
+          echo "Required job build-cass did not succeed (result: ${{ needs.build-cass.result }})"
+          failed=1
+        fi
 
         if [[ "$failed" -ne 0 ]]; then
           exit 1
