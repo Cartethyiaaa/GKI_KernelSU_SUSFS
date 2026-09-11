@@ -19,17 +19,12 @@ on:
         description: "Which kernel target(s) to build"
         type: choice
         options:
-          - "Both"
+          - "Both (6.12 + cass)"
           - "6.12"
           - "cass"
-        default: "Both"
+        default: "Both (6.12 + cass)"
       ksu_branch:
-        description: "KernelSU-Next branch or commit (empty = latest dev-susfs tip)"
-        type: string
-        required: false
-        default: ""
-      susfs_commit:
-        description: "SUSFS commit on gki-android16-6.12 (empty = latest)"
+        description: "KernelSU-Next branch or commit (empty = latest next tip)"
         type: string
         required: false
         default: ""
@@ -48,7 +43,7 @@ jobs:
     steps:
       - id: set
         run: |
-          case "${{ inputs.targets || 'Both' }}" in
+          case "${{ inputs.targets || 'Both (6.12 + cass)' }}" in
             "6.12") echo 'targets=["6.12"]' >> "$GITHUB_OUTPUT" ;;
             "cass") echo 'targets=["cass"]' >> "$GITHUB_OUTPUT" ;;
             *) echo 'targets=["6.12","cass"]' >> "$GITHUB_OUTPUT" ;;
@@ -98,7 +93,6 @@ jobs:
         run: |
           ARGS=(--target "${{ matrix.target }}")
           [[ -n "${{ inputs.ksu_branch }}" ]] && ARGS+=(--ksu-branch "${{ inputs.ksu_branch }}")
-          [[ -n "${{ inputs.susfs_commit }}" ]] && ARGS+=(--susfs-commit "${{ inputs.susfs_commit }}")
           [[ -n "${{ inputs.kernel_name }}" ]] && ARGS+=(--kernel-name "${{ inputs.kernel_name }}")
 
           ./build.sh "${ARGS[@]}"
@@ -160,9 +154,8 @@ jobs:
           body: |
             ## Kinosaki Kernel — ${{ steps.tag.outputs.new_tag }}
 
-            - KernelSU-Next: `${{ inputs.ksu_branch || 'dev-susfs (latest)' }}`
-            - SUSFS commit: `${{ inputs.susfs_commit || 'latest' }}`
-            - Targets built: ${{ inputs.targets || 'Both' }}
+            - KernelSU-Next: `${{ inputs.ksu_branch || 'next (official tip)' }}`
+            - Targets built: ${{ inputs.targets || 'Both (6.12 + cass)' }}
           draft: false
           prerelease: ${{ inputs.release_type == 'Pre-Release' }}
           files: release-assets/*.zip

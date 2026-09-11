@@ -4,7 +4,6 @@ set -euo pipefail
 
 TARGET=""
 KSU_BRANCH=""
-SUSFS_COMMIT=""
 KERNEL_NAME_OVERRIDE=""
 
 usage() {
@@ -13,10 +12,9 @@ Usage: $0 --target <6.12|cass> [options]
 
 Options:
   --target <6.12|cass>     Which kernel source branch to build (required)
-  --ksu-branch <ref>       KernelSU-Next branch/commit (default: dev-susfs tip)
-  --susfs-commit <sha>     SUSFS commit on gki-android16-6.12 (default: latest)
-  --kernel-name <tag>      Override the "Kinosaki-Bore" branding tag
-  -h, --help                Show this help
+  --ksu-branch <ref>       KernelSU-Next branch/commit (default: next tip)
+  --kernel-name <tag>      Override branding tag (default: Kinosaki-BORE or Kinosaki-CASS)
+  -h, --help               Show this help
 EOF
 }
 
@@ -24,7 +22,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) TARGET="$2"; shift 2 ;;
     --ksu-branch) KSU_BRANCH="$2"; shift 2 ;;
-    --susfs-commit) SUSFS_COMMIT="$2"; shift 2 ;;
     --kernel-name) KERNEL_NAME_OVERRIDE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
@@ -37,13 +34,12 @@ if [[ "$TARGET" != "6.12" && "$TARGET" != "cass" ]]; then
   exit 1
 fi
 
-# only the upstream kernel/common branch differs.
 CUSTOM_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10"
 ANDROID_VERSION="android16"
 KERNEL_VERSION="6.12"
 MANIFEST_SUBLEVEL="38"
 OS_PATCH_LEVEL="2025-09"
-VERSION="${ANDROID_VERSION}-${KERNEL_VERSION}"   # android16-6.12
+VERSION="${ANDROID_VERSION}-${KERNEL_VERSION}"
 
 if [[ "$TARGET" == "6.12" ]]; then
   CUSTOM_BRANCH="6.12"
@@ -61,7 +57,6 @@ AK3_DIR="${WORKSPACE}/AnyKernel3"
 log()  { echo -e "\n\033[1;36m==> $*\033[0m"; }
 warn() { echo -e "\033[1;33m[warn] $*\033[0m"; }
 
-# Setup build environment
 setup_build_environment() {
   log "Setting up build environment"
 
@@ -87,12 +82,10 @@ setup_build_environment() {
   sudo apt-get install -y -qq dwarves libelf-dev
 }
 
-# Sync kernel source
 download_kernel() {
   log "Downloading AOSP GKI manifest ($VERSION, os_patch_level=$OS_PATCH_LEVEL)"
 
   local formatted_branch="${ANDROID_VERSION}-${KERNEL_VERSION}-${OS_PATCH_LEVEL}"
-
   cd "$KERNEL_DIR"
 
   init_repo() {
@@ -145,7 +138,6 @@ download_kernel() {
   echo "kernel/common HEAD: $(git -C common rev-parse HEAD)"
 }
 
-# Build timestamp
 BUILD_EPOCH=""
 KERNEL_NAME_TAG=""
 set_build_timestamp() {
@@ -170,7 +162,6 @@ set_build_timestamp() {
   echo "Kernel branding tag: $KERNEL_NAME_TAG"
 }
 
-# Extract sublevel
 SUBLEVEL=""
 FILE_NAME=""
 extract_sublevel_and_name() {
@@ -184,15 +175,12 @@ extract_sublevel_and_name() {
 
   local stamp
   stamp=$(date -u -d "@${BUILD_EPOCH}" '+%Y%m%d-%H%M')
-
-  local label
-    label="${KERNEL_VERSION}.${SUBLEVEL}"
+  local label="${KERNEL_VERSION}.${SUBLEVEL}"
 
   FILE_NAME="AK3-${label}-${KERNEL_NAME_TAG}-${stamp}"
   echo "File name: $FILE_NAME"
 }
 
-# Kernel fixes
 apply_kernel_fixes() {
   log "Applying kernel fixes"
   cd "${KERNEL_DIR}/common"
@@ -237,22 +225,24 @@ apply_kconfig() {
   done <<< "$1"
 }
 
-# KernelSU-Next
 KSU_VERSION=""
 KSU_GIT_TAG=""
 setup_kernelsu() {
-  log "Setting up KernelSU-Next"
+  log "Setting up KernelSU-Next (official next)"
   cd "$KERNEL_DIR"
 
-  local ksu_repo="https://github.com/pershoot/KernelSU-Next.git"
-  local ksu_input="${KSU_BRANCH:-dev-susfs}"
+  local ksu_repo="https://github.com/KernelSU-Next/KernelSU-Next.git"
+  local ksu_input="${KSU_BRANCH:-next}"
 
-  curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
-  git -C KernelSU-Next/kernel fetch --depth=50 origin "$ksu_input"
-  if git ls-remote --heads "$ksu_repo" "$ksu_input" | grep -q .; then
-    git -C KernelSU-Next/kernel checkout "origin/${ksu_input}"
-  else
-    git -C KernelSU-Next/kernel checkout "$ksu_input"
+  curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+
+  if [[ -n "$KSU_BRANCH" && "$KSU_BRANCH" != "next" ]]; then
+    git -C KernelSU-Next/kernel fetch --depth=50 origin "$ksu_input"
+    if git ls-remote --heads "$ksu_repo" "$ksu_input" | grep -q .; then
+      git -C KernelSU-Next/kernel checkout "origin/${ksu_input}"
+    else
+      git -C KernelSU-Next/kernel checkout "$ksu_input"
+    fi
   fi
 
   cd KernelSU-Next/kernel
@@ -265,93 +255,14 @@ setup_kernelsu() {
   sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
 
   cd "${KERNEL_DIR}/KernelSU-Next"
-  patch -p1 < "${PATCH_DIR}/kernelsu-static.patch"
+  if [[ -f "${PATCH_DIR}/kernelsu-static.patch" ]]; then
+    patch -p1 < "${PATCH_DIR}/kernelsu-static.patch" || warn "Static patch skipped or already present"
+  fi
 
   apply_kconfig "CONFIG_KSU=y"
   echo "KSU version: $KSU_VERSION (tag: $KSU_GIT_TAG)"
 }
 
-# SUSFS
-SUSFS_VERSION=""
-setup_susfs() {
-  log "Setting up SUSFS"
-  cd "$WORKSPACE"
-
-  local susfs_branch="gki-${VERSION}"   # gki-android16-6.12
-  rm -rf susfs4ksu
-  git clone "https://gitlab.com/simonpunk/susfs4ksu.git" -b "$susfs_branch" susfs4ksu
-
-  if [[ -n "$SUSFS_COMMIT" ]]; then
-    git -C susfs4ksu checkout "$SUSFS_COMMIT"
-  fi
-
-  cd susfs4ksu
-  patch -p1 < "${WORKSPACE}/kernel_patches/pershoot/susfs4ksu/0001-pershoot-Allow-core-to-be-built-with-no-features.patch"
-  patch -p1 < "${WORKSPACE}/kernel_patches/pershoot/susfs4ksu/0002-pershoot-Implement-SuSFS-and-Toolkit-coexistence.patch"
-
-  apply_kconfig "$(cat <<'EOF'
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SUS_MAP=y
-EOF
-)"
-
-  cd "${KERNEL_DIR}/common"
-  cp "${WORKSPACE}/susfs4ksu/kernel_patches/fs/"* fs/
-  cp "${WORKSPACE}/susfs4ksu/kernel_patches/include/linux/"* include/linux/
-  cp "${WORKSPACE}/susfs4ksu/kernel_patches/50_add_susfs_in_gki-${VERSION}.patch" ./
-
-  # android16-6.12 fake patches
-  if [[ "$SUBLEVEL" -ge 58 ]]; then
-    echo "Applying exec.c android16-6.12 fake patch"
-    sed -i '/^#include <linux\/dma-buf.h>$/d' fs/exec.c
-  fi
-  if [[ "$SUBLEVEL" -ge 69 ]]; then
-    echo "Applying task_mmu.c android16-6.12 fake patch"
-    sed -i 's/vma_data_pages/vma_pages/g' fs/proc/task_mmu.c
-  fi
-
-  # apply the real SUSFS patch
-  patch -p1 < "50_add_susfs_in_gki-${VERSION}.patch"
-
-  # VMA_PAD_START() fallback
-  if grep -q 'VMA_PAD_START(' fs/proc/task_mmu.c && \
-     ! grep -qE '#include <linux/pgsize_migration(_inline)?\.h>|define VMA_PAD_START' fs/proc/task_mmu.c; then
-    sed -i '1a #ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif' fs/proc/task_mmu.c
-    echo "Added VMA_PAD_START fallback definition"
-  fi
-
-  # __fold_filemap_fixup_entry() fallback
-  if grep -q '__fold_filemap_fixup_entry' fs/proc/task_mmu.c && \
-     ! grep -q '#include <linux/page_size_compat.h>' fs/proc/task_mmu.c; then
-    sed -i '/#include <linux\/pkeys.h>/a #include <linux/page_size_compat.h>' fs/proc/task_mmu.c
-    echo "Added page_size_compat.h include"
-  fi
-
-  # revert the android16-6.12 fake patches now that the real patch applied
-  if [[ "$SUBLEVEL" -ge 58 ]]; then
-    echo "Reverting exec.c android16-6.12 fake patch"
-    sed -i '/^#include /a #include <linux/dma-buf.h>' fs/exec.c
-  fi
-  if [[ "$SUBLEVEL" -ge 69 ]]; then
-    echo "Reverting task_mmu.c android16-6.12 fake patch"
-    sed -i 's/vma_pages/vma_data_pages/g' fs/proc/task_mmu.c
-  fi
-
-  if [[ -f include/linux/susfs.h ]]; then
-    SUSFS_VERSION=$(grep '#define SUSFS_VERSION' include/linux/susfs.h | awk -F'"' '{print $2}' || echo "N/A")
-  fi
-  echo "SUSFS version: ${SUSFS_VERSION:-N/A}"
-}
-
-# Baseband Guard
 setup_bbg() {
   log "Setting up Baseband Guard"
   cd "$KERNEL_DIR"
@@ -367,7 +278,6 @@ setup_bbg() {
   apply_kconfig "CONFIG_BBG=y"
 }
 
-# Networking
 setup_networking() {
   log "Setting up networking configs"
 
@@ -421,12 +331,10 @@ CONFIG_CIFS_POSIX=y
 EOF
 )"
 
-  # CIFS fix for android16-6.12
   cd "${KERNEL_DIR}/common"
   sed -i '/"fs\/netfs\/netfs\.ko",/d' modules.bzl
 }
 
-# DroidSpaces-OSS
 setup_droidspaces() {
   log "Setting up DroidSpaces-OSS"
   cd "$WORKSPACE"
@@ -460,7 +368,6 @@ EOF
 )"
 }
 
-# NTSync
 setup_ntsync() {
   log "Applying NTSync patches"
   cd "${KERNEL_DIR}/common"
@@ -475,7 +382,6 @@ setup_ntsync() {
   apply_kconfig "CONFIG_NTSYNC=y"
 }
 
-# Ptrace patch
 apply_ptrace_patch() {
   log "Checking ptrace patch (kernel ${KERNEL_VERSION})"
   if [[ "$(printf '%s\n' "$KERNEL_VERSION" "5.16" | sort -V | head -n1)" == "$KERNEL_VERSION" ]]; then
@@ -486,7 +392,6 @@ apply_ptrace_patch() {
   fi
 }
 
-# Unicode fix
 apply_unicode_fix() {
   log "Applying unicode fix patch"
   cd "${KERNEL_DIR}/common"
@@ -497,7 +402,6 @@ apply_unicode_fix() {
   fi
 }
 
-# Misc configs
 setup_misc_and_btf() {
   log "Setting up misc kernel configs"
   apply_kconfig "$(cat <<'EOF'
@@ -517,7 +421,6 @@ EOF
 )"
 }
 
-# Kernel branding
 apply_kernel_branding() {
   log "Applying kernel branding: $KERNEL_NAME_TAG"
   cd "${KERNEL_DIR}/common"
@@ -527,7 +430,6 @@ apply_kernel_branding() {
   chmod +x scripts/setlocalversion
 }
 
-# Remove protected exports
 remove_protected_exports() {
   cd "$KERNEL_DIR"
   if [[ -f "build/build.sh" ]]; then
@@ -551,7 +453,6 @@ remove_protected_exports() {
   fi
 }
 
-# Clean dirty flags
 clean_kernel_flags() {
   log "Cleaning dirty flags"
   cd "$KERNEL_DIR"
@@ -568,9 +469,8 @@ clean_kernel_flags() {
     commit -m "Kinosaki: clean dirty flag" --quiet || true
 }
 
-# Build kernel (Normal, then Bypass)
 build_variant() {
-  local bypass="$1"   # "true" | "false"
+  local bypass="$1"
   log "Building kernel (bypass=${bypass})"
   cd "$KERNEL_DIR"
 
@@ -663,7 +563,6 @@ package_output() {
   echo "Built: $zip_path"
 }
 
-# Main
 main() {
   echo "============================================================"
   echo " Kinosaki Kernel build — target: ${TARGET} (${VERSION}, branch ${CUSTOM_BRANCH})"
@@ -675,7 +574,6 @@ main() {
   extract_sublevel_and_name
   apply_kernel_fixes
   setup_kernelsu
-  setup_susfs
   setup_bbg
   setup_networking
   setup_droidspaces
@@ -692,7 +590,7 @@ main() {
 
   echo
   echo "============================================================"
-  echo " Done. KSU=${KSU_VERSION:-N/A} (${KSU_GIT_TAG:-N/A})  SUSFS=${SUSFS_VERSION:-N/A}"
+  echo " Done. KSU=${KSU_VERSION:-N/A} (${KSU_GIT_TAG:-N/A})"
   echo " Output: ${WORKSPACE}/out/${FILE_NAME}.zip"
   echo "============================================================"
 }
