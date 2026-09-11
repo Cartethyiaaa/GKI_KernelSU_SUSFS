@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔥 Wild Kernels for Android
+# 🔥 Kinosaki Kernel
 
 [![KernelSU](https://img.shields.io/badge/KernelSU-Supported-green)](https://kernelsu.org/)
 [![SUSFS](https://img.shields.io/badge/SUSFS-Integrated-orange)](https://gitlab.com/simonpunk/susfs4ksu)
@@ -21,21 +21,48 @@ By flashing this kernel, **YOU** are choosing to make these modifications. If so
 
 ---
 
-## 🔧 Available Kernels
+## 🔧 About this build system
 
-| Kernel | Repository | Status |
-|--------|------------|--------|
-| 🏗️ **GKI** | [GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) | ✅ Active |
-| 👑 **Sultan** | [Sultan_KernelSU_SUSFS](https://github.com/WildKernels/Sultan_KernelSU_SUSFS) | ✅ Active |
-| 📱 **OnePlus** | [OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS) | ✅ Active |
+Kinosaki Kernel is built from a single consolidated pipeline:
 
----
+- **`build.sh`** — one script that does the entire build: downloads the AOSP
+  GKI `android16-6.12` source, applies every patch (KernelSU-Next, SUSFS,
+  Baseband Guard, Networking/CIFS/Wireguard, DroidSpaces-OSS, NTSync, unicode
+  fix, misc/BTF configs, branding, dirty-flag cleanup...), and packages an
+  AnyKernel3 zip.
+- **`.github/workflows/build.yml`** — one workflow that runs `build.sh` for
+  the two supported targets.
 
-## 🔗 Additional Resources
+## 🎯 Supported targets
 
-- 🩹 [Kernel Patches](https://github.com/WildKernels/kernel_patches)
-- 📜 [Old Build Scripts](https://github.com/TheWildJames/kernel_build_scripts)
-- ⚡ [Kernel Flasher](https://github.com/fatalcoder524/KernelFlasher)
+Only two kernel targets are built — both are `android16-6.12`, they only
+differ in which upstream `kernel/common` branch is used:
+
+| Target | Branch | Output |
+|--------|--------|--------|
+| **6.12**  | `6.12` | `AK3-6.12.38-Kinosaki-Bore-<tanggal><jam>.zip` |
+| **cass**  | `cass` | `AK3-CASS-Kinosaki-Bore-<tanggal><jam>.zip` |
+
+SUSFS is always included — there's no on/off toggle, it's a permanent part
+of the build alongside KernelSU-Next.
+
+## 🛠️ Building locally
+
+```bash
+chmod +x build.sh
+./build.sh --target 6.12   # or: --target cass
+```
+
+Optional flags: `--ksu-branch`, `--susfs-commit`, `--kernel-name`.
+
+## 🛠️ Building via GitHub Actions
+
+Run the **Build Kinosaki Kernel** workflow (`workflow_dispatch`) and choose:
+
+- `targets`: `6.12`, `cass`, or both
+- `release_type`: `Action` (artifacts only), `Pre-Release`, or `Release`
+- optional overrides for the KernelSU-Next branch, SUSFS commit, and
+  branding tag
 
 ---
 
@@ -49,8 +76,12 @@ For GKI installation, please follow the official guide:
 
 ## ✨ Features
 
-- 🔐 **KernelSU**: A root solution for Android GKI devices that works in kernel mode and grants root permission to userspace applications directly in kernel space
-- 🛡️ **SUSFS**: An addon root hiding kernel patches and userspace module for KernelSU
+- 🔐 **KernelSU-Next**: A root solution for Android GKI devices that works in kernel mode and grants root permission to userspace applications directly in kernel space
+- 🛡️ **SUSFS**: An addon root hiding kernel patches and userspace module for KernelSU (always enabled)
+- 🛡️ **Baseband Guard (BBG)**: Baseband/modem partition protection
+- 🌐 **Networking**: IP Set, advanced TCP congestion control (incl. BBR), FQ/CAKE qdiscs, CIFS, Wireguard
+- 🗂️ **DroidSpaces-OSS**: namespace/SysV IPC support patches
+- 🖱️ **NTSync**: NT synchronization primitives for Wine/Proton-style workloads
 
 ---
 
@@ -62,8 +93,9 @@ For GKI installation, please follow the official guide:
 - 🛡️ **SUSFS**: Developed by [simonpunk](https://gitlab.com/simonpunk/susfs4ksu.git)
 - 🛡️ **Baseband-guard (BBG)**: Developed by [vc-teahouse](https://github.com/vc-teahouse/Baseband-guard)
 - 📦 **SUSFS Module**: Developed by [sidex15](https://github.com/sidex15)
-- 👑 **Sultan Kernels**: Developed by [kerneltoast](https://github.com/kerneltoast)
-- 🔧 **Device Boot Fix**: [Boot fix commit](https://github.com/Anything-at-25-00/android_kernel_common_android12-5.10/commit/2476d262b597fe8af82cfb7aaf96676f51c6b4ed) for fixing some devices not booting
+- 🗂️ **Droidspaces-OSS**: Developed by [ravindu644](https://github.com/ravindu644/Droidspaces-OSS)
+- 🩹 **Kernel patches**: [WildKernels/kernel_patches](https://github.com/WildKernels/kernel_patches)
+- 📦 **AnyKernel3**: [Cartethyiaaa/AnyKernel3](https://github.com/Cartethyiaaa/AnyKernel3)
 
 🙏 Special thanks to the open-source community for their contributions!
 
@@ -71,9 +103,7 @@ For GKI installation, please follow the official guide:
 
 ## 💬 Support
 
-If you encounter any issues or need help, feel free to:
-- 🐛 Open an issue in this repository
-- 💬 Reach out to me directly
+If you encounter any issues or need help, feel free to open an issue in this repository.
 
 ---
 
@@ -84,44 +114,3 @@ Flashing this kernel will void your warranty, and there is always a risk of bric
 - 🧠 Understand the risks before proceeding
 
 **🚨 Proceed at your own risk!**
-
----
-
-<div align="center">
-
-## 📱 Connect With Us
-
-[![Telegram](https://img.shields.io/badge/Telegram-TheWildJames-blue?logo=telegram)](https://t.me/TheWildJames)
-[![Telegram Group](https://img.shields.io/badge/Telegram-WildKernelsTG-blue?logo=telegram)](https://t.me/WildKernelsTG)
-
-</div>
-
----
-
-## 🌟 Special Thanks
-
-**These amazing people help make this project possible! ❤️**
-
-| Contributor | Contribution |
-|-------------|-------------|
-| 🛡️ [simonpunk](https://gitlab.com/simonpunk/susfs4ksu.git) | Created SUSFS! |
-| 📦 [sidex15](https://github.com/sidex15) | Created module! |
-| 🩹 [backslashxx](https://github.com/backslashxx) | Helped with patches! |
-| 🔧 [Teemo](https://github.com/liqideqq) | Helped with patches! |
-| 💝 [幕落](https://github.com/MuLuo688) | Donation! |
-| 🛡️ [vc-teahouse](https://github.com/vc-teahouse) | Created Baseband-guard (BBG)! |
-
-*If you have contributed and are not listed here, please remind me!* 🙏
-
----
-
-## 💝 Donations
-
-Any and all donations are appreciated!
-
-- PayPal: [bauhd@outlook.com](mailto:bauhd@outlook.com)
-- Card: <https://buy.stripe.com/5kQ28sdi08Nr0Xc2fU5os00>
-- LTC: MVaN1ToSuks2cdK9mB3M8EHCfzQSyEMf6h
-- BTC: 3BBXAMS4ZuCZwfbTXxWGczxHF4isymeyxG
-- ETH: 0x2b9C846c84d58717e784458406235C09a834274e
-- Patreon: <https://patreon.com/WildKernels>
