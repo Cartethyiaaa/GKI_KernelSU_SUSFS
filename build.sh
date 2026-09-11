@@ -254,6 +254,19 @@ setup_kernelsu() {
   KSU_GIT_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.1)"
   sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
 
+  # Fix linkage mismatch di selinux_hide.c (jadikan forward declaration static)
+  local hide_file="${KERNEL_DIR}/KernelSU-Next/kernel/feature/selinux_hide.c"
+  if [[ ! -f "$hide_file" ]]; then
+    hide_file="${KERNEL_DIR}/common/drivers/kernelsu/feature/selinux_hide.c"
+  fi
+
+  if [[ -f "$hide_file" ]]; then
+    log "Fixing static declarations in selinux_hide.c"
+    sed -i 's/^int security_context_to_sid_with_policy/static int security_context_to_sid_with_policy/' "$hide_file"
+    sed -i 's/^int security_sid_to_context_with_policy/static int security_sid_to_context_with_policy/' "$hide_file"
+    sed -i 's/^void security_compute_av_user_with_policy/static void security_compute_av_user_with_policy/' "$hide_file"
+  fi
+
   cd "${KERNEL_DIR}/KernelSU-Next"
   if [[ -f "${PATCH_DIR}/kernelsu-static.patch" ]]; then
     patch -p1 < "${PATCH_DIR}/kernelsu-static.patch" || warn "Static patch skipped or already present"
