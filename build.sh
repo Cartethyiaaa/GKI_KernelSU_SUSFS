@@ -404,6 +404,7 @@ apply_unicode_fix() {
 
 setup_misc_and_btf() {
   log "Setting up misc kernel configs"
+  # CONFIG_ADIOS=y dihapus karena tidak ada driver/patch di repo upstream
   apply_kconfig "$(cat <<'EOF'
 CONFIG_OVERLAY_FS=y
 CONFIG_TMPFS_XATTR=y
@@ -415,7 +416,6 @@ CONFIG_KPROBE_EVENTS=y
 CONFIG_UPROBES=y
 CONFIG_UPROBE_EVENTS=y
 CONFIG_FUSE_BPF=y
-CONFIG_ADIOS=y
 CONFIG_DEBUG_INFO_BTF=y
 EOF
 )"
@@ -483,7 +483,13 @@ build_variant() {
     fi
   fi
 
-  sed -i 's/check_defconfig//' ./common/build.config.gki
+  [[ -f "./common/build.config.gki" ]] && sed -i 's/check_defconfig//' ./common/build.config.gki
+
+  # Nonaktifkan check_defconfig Bazel secara permanen agar tidak fail saat ada config tambahan
+  if grep -q 'name = "kernel_aarch64"' common/BUILD.bazel; then
+    sed -i '/check_defconfig =/d' common/BUILD.bazel
+    sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
+  fi
 
   if [[ -f "build/build.sh" ]]; then
     BUILD_GKI_ARTIFACTS="" \
@@ -498,9 +504,12 @@ build_variant() {
     build/build.sh -j"$(nproc)" \
     CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++"
   else
-    if [[ "$bypass" == "false" ]] && ! grep -q 'check_defconfig = "disabled"' common/BUILD.bazel; then
-      sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
-    fi
+    tools/bazel build \
+      --config=fast \
+      --config=stamp \
+      --kconfig_check=none \
+      --disk_cache="${HOME}/.cache/bazel" \
+      //common:kernel_aarch64/Image || \
     tools/bazel build \
       --config=fast \
       --config=stamp \
