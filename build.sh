@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
+#
+# Kinosaki Kernel build script
+# Builds a GKI 6.12 kernel with KernelSU-Next, Baseband Guard,
+#
 
 set -euo pipefail
+
+# Constants
+readonly CUSTOM_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10"
+readonly ANDROID_VERSION="android16"
+readonly KERNEL_VERSION="6.12"
+readonly MANIFEST_SUBLEVEL="38"
+readonly OS_PATCH_LEVEL="2025-09"
+readonly VERSION="${ANDROID_VERSION}-${KERNEL_VERSION}"
+
+readonly WORKSPACE="$(pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PATCH_DIR="${SCRIPT_DIR}/patches"
+readonly KERNEL_DIR="${WORKSPACE}/kernel"
+readonly OUT_DIR="/home/runner/out"
+readonly AK3_DIR="${WORKSPACE}/AnyKernel3"
+
+readonly BOT_NAME="kinosaki-bot"
+readonly BOT_EMAIL="kinosaki-bot@users.noreply.github.com"
+
+# CLI parsing
 
 TARGET=""
 KSU_BRANCH=""
@@ -14,54 +38,95 @@ Options:
   --target <6.12|cass>     Which kernel source branch to build (required)
   --ksu-branch <ref>       KernelSU-Next branch/commit (default: next tip)
   --kernel-name <tag>      Override branding tag (default: Kinosaki-BORE or Kinosaki-CASS)
-  -h, --help               Show this help
+  -h, --help                Show this help
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --target) TARGET="$2"; shift 2 ;;
-    --ksu-branch) KSU_BRANCH="$2"; shift 2 ;;
-    --kernel-name) KERNEL_NAME_OVERRIDE="$2"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
-  esac
-done
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --target)       TARGET="$2"; shift 2 ;;
+      --ksu-branch)   KSU_BRANCH="$2"; shift 2 ;;
+      --kernel-name)  KERNEL_NAME_OVERRIDE="$2"; shift 2 ;;
+      -h|--help)      usage; exit 0 ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        usage
+        exit 1
+        ;;
+    esac
+  done
 
-if [[ "$TARGET" != "6.12" && "$TARGET" != "cass" ]]; then
-  echo "ERROR: --target must be '6.12' or 'cass' (got: '${TARGET:-<empty>}')" >&2
-  usage
-  exit 1
-fi
+  if [[ "$TARGET" != "6.12" && "$TARGET" != "cass" ]]; then
+    echo "ERROR: --target must be '6.12' or 'cass' (got: '${TARGET:-<empty>}')" >&2
+    usage
+    exit 1
+  fi
+}
 
-CUSTOM_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10"
-ANDROID_VERSION="android16"
-KERNEL_VERSION="6.12"
-MANIFEST_SUBLEVEL="38"
-OS_PATCH_LEVEL="2025-09"
-VERSION="${ANDROID_VERSION}-${KERNEL_VERSION}"
-
-if [[ "$TARGET" == "6.12" ]]; then
-  CUSTOM_BRANCH="6.12"
-else
-  CUSTOM_BRANCH="cass"
-fi
-
-WORKSPACE="$(pwd)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PATCH_DIR="${SCRIPT_DIR}/patches"
-KERNEL_DIR="${WORKSPACE}/kernel"
-OUT_DIR="/home/runner/out"
-AK3_DIR="${WORKSPACE}/AnyKernel3"
-
+# Logging helpers
 log()  { echo -e "\n\033[1;36m==> $*\033[0m"; }
 warn() { echo -e "\033[1;33m[warn] $*\033[0m"; }
+die()  { echo "ERROR: $*" >&2; exit 1; }
 
+on_error() {
+  local exit_code=$?
+  local line_no=$1
+  echo -e "\033[1;31m[fail] build.sh exited ${exit_code} at line ${line_no}\033[0m" >&2
+}
+trap 'on_error $LINENO' ERR
+
+# Derived
+CUSTOM_BRANCH=""
+BUILD_EPOCH=""
+KERNEL_NAME_TAG=""
+SUBLEVEL=""
+FILE_NAME=""
+KSU_VERSION=""
+KSU_GIT_TAG=""
+
+resolve_custom_branch() {
+  if [[ "$TARGET" == "6.12" ]]; then
+    CUSTOM_BRANCH="6.12"
+  else
+    CUSTOM_BRANCH="cass"
+  fi
+}
+
+# kconfig helper
+apply_kconfig() {
+  local defconfig="${KERNEL_DIR}/common/arch/arm64/configs/gki_defconfig"
+  [[ -f "$defconfig" ]] || die "gki_defconfig not found at ${defconfig}"
+
+  local line key value
+  while IFS= read -r line; do
+    line="$(echo "$line" | xargs)"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+
+    if [[ "$line" == *"="* ]]; then
+      key="${line%%=*}"
+      value="${line#*=}"
+    else
+      key="$line"
+      value="y"
+    fi
+
+    if grep -q "^${key}=" "$defconfig"; then
+      sed -i "s|^${key}=.*|${key}=${value}|g" "$defconfig"
+    elif grep -q "^# ${key} is not set" "$defconfig"; then
+      sed -i "s|^# ${key} is not set|${key}=${value}|g" "$defconfig"
+    else
+      echo "${key}=${value}" >> "$defconfig"
+    fi
+  done <<< "$1"
+}
+
+# Stage: environment setup
 setup_build_environment() {
   log "Setting up build environment"
 
-  git config --global user.name "kinosaki-bot"
-  git config --global user.email "kinosaki-bot@users.noreply.github.com"
+  git config --global user.name "$BOT_NAME"
+  git config --global user.email "$BOT_EMAIL"
 
   mkdir -p "$KERNEL_DIR"
 
@@ -82,90 +147,96 @@ setup_build_environment() {
   sudo apt-get install -y -qq dwarves libelf-dev
 }
 
+# Stage: kernel source
+_repo_init() {
+  local formatted_branch="$1"
+  repo init -u https://android.googlesource.com/kernel/manifest \
+    -b "common-${formatted_branch}" --depth=1
+
+  local remote_branch
+  remote_branch=$(git ls-remote https://android.googlesource.com/kernel/common "${formatted_branch}")
+  if grep -q deprecated <<<"$remote_branch"; then
+    sed -i "s/\"${formatted_branch}\"/\"deprecated\/${formatted_branch}\"/g" .repo/manifests/default.xml
+    warn "Branch ${formatted_branch} is deprecated upstream."
+  fi
+}
+
+_repo_sync_with_retries() {
+  local max_retries=3 attempt=1
+  while (( attempt <= max_retries )); do
+    echo "repo sync attempt ${attempt}/${max_retries}..."
+    if timeout 15m repo sync -c --current-branch --no-clone-bundle --no-tags --jobs-checkout=4 -j4; then
+      return 0
+    fi
+    if (( attempt < max_retries )); then
+      rm -rf .repo
+      sleep 15
+      _repo_init "$1"
+    else
+      die "repo sync failed after ${max_retries} attempts"
+    fi
+    attempt=$((attempt + 1))
+  done
+}
+
+_clone_custom_common() {
+  log "Overriding kernel/common with ${CUSTOM_REPO} (branch: ${CUSTOM_BRANCH})"
+  rm -rf common
+
+  local attempt=1
+  while (( attempt <= 3 )); do
+    if git clone --branch "$CUSTOM_BRANCH" --depth=1 "$CUSTOM_REPO" common; then
+      echo "kernel/common HEAD: $(git -C common rev-parse HEAD)"
+      return 0
+    fi
+    rm -rf common
+    if (( attempt == 3 )); then
+      die "failed to clone ${CUSTOM_REPO} (${CUSTOM_BRANCH})"
+    fi
+    attempt=$((attempt + 1))
+    sleep 10
+  done
+}
+
 download_kernel() {
   log "Downloading AOSP GKI manifest ($VERSION, os_patch_level=$OS_PATCH_LEVEL)"
 
   local formatted_branch="${ANDROID_VERSION}-${KERNEL_VERSION}-${OS_PATCH_LEVEL}"
   cd "$KERNEL_DIR"
 
-  init_repo() {
-    repo init -u https://android.googlesource.com/kernel/manifest \
-      -b "common-${formatted_branch}" --depth=1
-    local remote_branch
-    remote_branch=$(git ls-remote https://android.googlesource.com/kernel/common "${formatted_branch}")
-    if grep -q deprecated <<<"$remote_branch"; then
-      sed -i "s/\"${formatted_branch}\"/\"deprecated\/${formatted_branch}\"/g" .repo/manifests/default.xml
-      warn "Branch ${formatted_branch} is deprecated upstream."
-    fi
-  }
-
-  init_repo
-
-  local max_retries=3 attempt=1
-  while (( attempt <= max_retries )); do
-    echo "repo sync attempt ${attempt}/${max_retries}..."
-    if timeout 15m repo sync -c --current-branch --no-clone-bundle --no-tags --jobs-checkout=4 -j4; then
-      break
-    fi
-    if (( attempt < max_retries )); then
-      rm -rf .repo
-      sleep 15
-      init_repo
-    else
-      echo "ERROR: repo sync failed after ${max_retries} attempts" >&2
-      exit 1
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  log "Overriding kernel/common with ${CUSTOM_REPO} (branch: ${CUSTOM_BRANCH})"
-  rm -rf common
-
-  local clone_attempt=1
-  while (( clone_attempt <= 3 )); do
-    if git clone --branch "$CUSTOM_BRANCH" --depth=1 "$CUSTOM_REPO" common; then
-      break
-    fi
-    rm -rf common
-    if (( clone_attempt == 3 )); then
-      echo "ERROR: failed to clone ${CUSTOM_REPO} (${CUSTOM_BRANCH})" >&2
-      exit 1
-    fi
-    clone_attempt=$((clone_attempt + 1))
-    sleep 10
-  done
-
-  echo "kernel/common HEAD: $(git -C common rev-parse HEAD)"
+  _repo_init "$formatted_branch"
+  _repo_sync_with_retries "$formatted_branch"
+  _clone_custom_common
 }
 
-BUILD_EPOCH=""
-KERNEL_NAME_TAG=""
+# Stage: build metadata
 set_build_timestamp() {
   log "Setting build timestamp / branding tag"
+
   BUILD_EPOCH=$(date -u +%s)
   export SOURCE_DATE_EPOCH="$BUILD_EPOCH"
+
   export KBUILD_BUILD_TIMESTAMP
   KBUILD_BUILD_TIMESTAMP=$(date -u -d "@${BUILD_EPOCH}" '+%a %b %d %H:%M:%S UTC %Y')
+
   export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
   GIT_COMMITTER_DATE=$(date -u -d "@${BUILD_EPOCH}" '+%Y-%m-%dT%H:%M:%SZ')
   GIT_AUTHOR_DATE="$GIT_COMMITTER_DATE"
 
   if [[ -n "$KERNEL_NAME_OVERRIDE" ]]; then
     KERNEL_NAME_TAG=$(echo "$KERNEL_NAME_OVERRIDE" | sed 's/[^A-Za-z0-9._-]/-/g')
+  elif [[ "$TARGET" == "6.12" ]]; then
+    KERNEL_NAME_TAG="Kinosaki-BORE"
   else
-    if [[ "$TARGET" == "6.12" ]]; then
-      KERNEL_NAME_TAG="Kinosaki-BORE"
-    else
-      KERNEL_NAME_TAG="Kinosaki-CASS"
-    fi
+    KERNEL_NAME_TAG="Kinosaki-CASS"
   fi
+
   echo "Kernel branding tag: $KERNEL_NAME_TAG"
 }
 
-SUBLEVEL=""
-FILE_NAME=""
 extract_sublevel_and_name() {
   log "Extracting sublevel / composing file name"
+
   SUBLEVEL="$MANIFEST_SUBLEVEL"
   if [[ -f "${KERNEL_DIR}/common/Makefile" ]]; then
     local extracted
@@ -173,79 +244,54 @@ extract_sublevel_and_name() {
     [[ -n "$extracted" ]] && SUBLEVEL="$extracted"
   fi
 
-  local stamp
+  local stamp label
   stamp=$(date -u -d "@${BUILD_EPOCH}" '+%Y%m%d-%H%M')
-  local label="${KERNEL_VERSION}.${SUBLEVEL}"
+  label="${KERNEL_VERSION}.${SUBLEVEL}"
 
   FILE_NAME="AK3-${label}-${KERNEL_NAME_TAG}-${stamp}"
   echo "File name: $FILE_NAME"
 }
 
+# Stage: toolchain
 apply_kernel_fixes() {
   log "Applying kernel fixes"
   cd "${KERNEL_DIR}/common"
 
   local glibc_version
   glibc_version="$(ldd --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-  if [[ "$(printf '%s\n' "2.38" "$glibc_version" | sort -V | head -n1)" == "2.38" ]]; then
-    echo "GLIBC ${glibc_version} >= 2.38, checking resolve_btfids Makefile..."
-    if grep -q '$(Q)$(MAKE) -C $(SUBCMD_SRC) OUTPUT=$(abspath $(dir $@))/ $(abspath $@)' tools/bpf/resolve_btfids/Makefile; then
-      sed -i '/\$(Q)\$(MAKE) -C \$(SUBCMD_SRC) OUTPUT=\$(abspath \$(dir \$@))\/ \$(abspath \$@)/s//$(Q)$(MAKE) -C $(SUBCMD_SRC) EXTRA_CFLAGS="$(CFLAGS)" OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/' tools/bpf/resolve_btfids/Makefile
-      echo "  -> Makefile EXTRA_CFLAGS fix applied"
-    else
-      echo "  -> pattern not found / already fixed, skipping"
-    fi
-  else
+
+  if [[ "$(printf '%s\n' "2.38" "$glibc_version" | sort -V | head -n1)" != "2.38" ]]; then
     echo "GLIBC ${glibc_version} < 2.38, skipping resolve_btfids Makefile fix"
+    return
+  fi
+
+  echo "GLIBC ${glibc_version} >= 2.38, checking resolve_btfids Makefile..."
+  local target="tools/bpf/resolve_btfids/Makefile"
+
+  if grep -q '$(Q)$(MAKE) -C $(SUBCMD_SRC) OUTPUT=$(abspath $(dir $@))/ $(abspath $@)' "$target"; then
+    sed -i '/\$(Q)\$(MAKE) -C \$(SUBCMD_SRC) OUTPUT=\$(abspath \$(dir \$@))\/ \$(abspath \$@)/s//$(Q)$(MAKE) -C $(SUBCMD_SRC) EXTRA_CFLAGS="$(CFLAGS)" OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/' "$target"
+    echo "  -> Makefile EXTRA_CFLAGS fix applied"
+  else
+    echo "  -> pattern not found / already fixed, skipping"
   fi
 }
 
-apply_kconfig() {
-  local defconfig="${KERNEL_DIR}/common/arch/arm64/configs/gki_defconfig"
-  if [[ ! -f "$defconfig" ]]; then
-    echo "ERROR: gki_defconfig not found" >&2
-    exit 1
-  fi
-  while IFS= read -r line; do
-    line="$(echo "$line" | xargs)"
-    [[ -z "$line" || "$line" == \#* ]] && continue
-    local key value
-    if [[ "$line" == *"="* ]]; then
-      key="${line%%=*}"; value="${line#*=}"
-    else
-      key="$line"; value="y"
-    fi
-    if grep -q "^${key}=" "$defconfig"; then
-      sed -i "s|^${key}=.*|${key}=${value}|g" "$defconfig"
-    elif grep -q "^# ${key} is not set" "$defconfig"; then
-      sed -i "s|^# ${key} is not set|${key}=${value}|g" "$defconfig"
-    else
-      echo "${key}=${value}" >> "$defconfig"
-    fi
-  done <<< "$1"
-}
-
-KSU_VERSION=""
-KSU_GIT_TAG=""
-setup_kernelsu() {
-  log "Setting up KernelSU-Next (official next)"
-  cd "$KERNEL_DIR"
-
+# Stage: KernelSU-Next
+_ksu_checkout_branch() {
   local ksu_repo="https://github.com/KernelSU-Next/KernelSU-Next.git"
   local ksu_input="${KSU_BRANCH:-next}"
 
-  curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+  [[ -z "$KSU_BRANCH" || "$KSU_BRANCH" == "next" ]] && return
 
-  if [[ -n "$KSU_BRANCH" && "$KSU_BRANCH" != "next" ]]; then
-    git -C KernelSU-Next/kernel fetch --depth=50 origin "$ksu_input"
-    if git ls-remote --heads "$ksu_repo" "$ksu_input" | grep -q .; then
-      git -C KernelSU-Next/kernel checkout "origin/${ksu_input}"
-    else
-      git -C KernelSU-Next/kernel checkout "$ksu_input"
-    fi
+  git -C KernelSU-Next/kernel fetch --depth=50 origin "$ksu_input"
+  if git ls-remote --heads "$ksu_repo" "$ksu_input" | grep -q .; then
+    git -C KernelSU-Next/kernel checkout "origin/${ksu_input}"
+  else
+    git -C KernelSU-Next/kernel checkout "$ksu_input"
   fi
+}
 
-  cd KernelSU-Next/kernel
+_ksu_stamp_version() {
   local commits_count base_version=30000
   commits_count=$(git rev-list --count HEAD)
   KSU_VERSION=$((commits_count + base_version))
@@ -253,44 +299,49 @@ setup_kernelsu() {
 
   KSU_GIT_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.1)"
   sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
+}
 
-  # Fix linkage mismatch di selinux_hide.c (jadikan forward declaration static)
-  local hide_file="${KERNEL_DIR}/KernelSU-Next/kernel/feature/selinux_hide.c"
-  if [[ ! -f "$hide_file" ]]; then
-    hide_file="${KERNEL_DIR}/common/drivers/kernelsu/feature/selinux_hide.c"
-  fi
+_ksu_fix_selinux_hide_linkage() {
+  local patch_file="${PATCH_DIR}/kernelsu-static.patch"
+  [[ -f "$patch_file" ]] || die "${patch_file} not found"
 
-  if [[ -f "$hide_file" ]]; then
-    log "Fixing static declarations in selinux_hide.c"
-    sed -i 's/^int security_context_to_sid_with_policy/static int security_context_to_sid_with_policy/' "$hide_file"
-    sed -i 's/^int security_sid_to_context_with_policy/static int security_sid_to_context_with_policy/' "$hide_file"
-    sed -i 's/^void security_compute_av_user_with_policy/static void security_compute_av_user_with_policy/' "$hide_file"
-  fi
-
+  log "Applying kernelsu-static.patch"
   cd "${KERNEL_DIR}/KernelSU-Next"
-  if [[ -f "${PATCH_DIR}/kernelsu-static.patch" ]]; then
-    patch -p1 < "${PATCH_DIR}/kernelsu-static.patch" || warn "Static patch skipped or already present"
-  fi
+  patch -p1 < "$patch_file"
+}
+
+setup_kernelsu() {
+  log "Setting up KernelSU-Next"
+  cd "$KERNEL_DIR"
+
+  curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
+
+  _ksu_checkout_branch
+
+  (cd KernelSU-Next/kernel && _ksu_stamp_version)
+  _ksu_fix_selinux_hide_linkage
 
   apply_kconfig "CONFIG_KSU=y"
   echo "KSU version: $KSU_VERSION (tag: $KSU_GIT_TAG)"
 }
 
+# Stage: Baseband Guard
 setup_bbg() {
   log "Setting up Baseband Guard"
   cd "$KERNEL_DIR"
+
   wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
 
-  sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+  sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' \
+    common/security/Kconfig
 
-  if ! grep -q "baseband_guard" common/security/Kconfig; then
-    echo "ERROR: baseband_guard not found in common/security/Kconfig" >&2
-    exit 1
-  fi
+  grep -q "baseband_guard" common/security/Kconfig \
+    || die "baseband_guard not found in common/security/Kconfig"
 
   apply_kconfig "CONFIG_BBG=y"
 }
 
+# Stage: networking configs
 setup_networking() {
   log "Setting up networking configs"
 
@@ -348,6 +399,7 @@ EOF
   sed -i '/"fs\/netfs\/netfs\.ko",/d' modules.bzl
 }
 
+# Stage: DroidSpaces-OSS
 setup_droidspaces() {
   log "Setting up DroidSpaces-OSS"
   cd "$WORKSPACE"
@@ -362,6 +414,7 @@ setup_droidspaces() {
     echo
     echo 'EXPORT_SYMBOL_GPL(put_ipc_ns);'
   } >> "${KERNEL_DIR}/common/ipc/namespace.c"
+
   {
     echo
     echo 'EXPORT_SYMBOL_GPL(init_ipc_ns);'
@@ -381,6 +434,7 @@ EOF
 )"
 }
 
+# Stage: NTSync
 setup_ntsync() {
   log "Applying NTSync patches"
   cd "${KERNEL_DIR}/common"
@@ -395,9 +449,14 @@ setup_ntsync() {
   apply_kconfig "CONFIG_NTSYNC=y"
 }
 
+# Stage: misc patches
+_kernel_version_at_least() {
+  [[ "$(printf '%s\n' "$KERNEL_VERSION" "$1" | sort -V | head -n1)" == "$1" ]]
+}
+
 apply_ptrace_patch() {
   log "Checking ptrace patch (kernel ${KERNEL_VERSION})"
-  if [[ "$(printf '%s\n' "$KERNEL_VERSION" "5.16" | sort -V | head -n1)" == "$KERNEL_VERSION" ]]; then
+  if _kernel_version_at_least "5.16"; then
     cd "${KERNEL_DIR}/common"
     patch -p1 -F3 < "${WORKSPACE}/kernel_patches/gki_ptrace.patch"
   else
@@ -408,7 +467,7 @@ apply_ptrace_patch() {
 apply_unicode_fix() {
   log "Applying unicode fix patch"
   cd "${KERNEL_DIR}/common"
-  if [[ "$(printf '%s\n' "$KERNEL_VERSION" "5.16" | sort -V | head -n1)" == "$KERNEL_VERSION" ]]; then
+  if _kernel_version_at_least "5.16"; then
     patch -p1 --forward < "${WORKSPACE}/kernel_patches/common/unicode_bypass_fix_6.1-.patch"
   else
     patch -p1 --forward < "${WORKSPACE}/kernel_patches/common/unicode_bypass_fix_6.1+.patch"
@@ -417,7 +476,6 @@ apply_unicode_fix() {
 
 setup_misc_and_btf() {
   log "Setting up misc kernel configs"
-  # CONFIG_ADIOS=y dihapus karena tidak ada driver/patch di repo upstream
   apply_kconfig "$(cat <<'EOF'
 CONFIG_OVERLAY_FS=y
 CONFIG_TMPFS_XATTR=y
@@ -434,9 +492,11 @@ EOF
 )"
 }
 
+# Stage: branding
 apply_kernel_branding() {
   log "Applying kernel branding: $KERNEL_NAME_TAG"
   cd "${KERNEL_DIR}/common"
+
   local kernel_string="${KERNEL_VERSION}.${SUBLEVEL}-${ANDROID_VERSION}"
   sed -i '$d' scripts/setlocalversion
   echo "echo \"${kernel_string}-${KERNEL_NAME_TAG}\"" >> scripts/setlocalversion
@@ -445,6 +505,7 @@ apply_kernel_branding() {
 
 remove_protected_exports() {
   cd "$KERNEL_DIR"
+
   if [[ -f "build/build.sh" ]]; then
     echo "Legacy build system detected, skipping protected-exports removal"
     return
@@ -469,6 +530,7 @@ remove_protected_exports() {
 clean_kernel_flags() {
   log "Cleaning dirty flags"
   cd "$KERNEL_DIR"
+
   if [[ -f "build/build.sh" ]]; then
     sed -i 's/-dirty//' common/scripts/setlocalversion
   else
@@ -478,8 +540,63 @@ clean_kernel_flags() {
 
   cd "${KERNEL_DIR}/common"
   git add -A
-  git -c user.name="kinosaki-bot" -c user.email="kinosaki-bot@users.noreply.github.com" \
+  git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" \
     commit -m "Kinosaki: clean dirty flag" --quiet || true
+}
+
+# Stage: build
+_apply_bypass_patch() {
+  local target_file="common/kernel/module/version.c"
+  sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$target_file"
+  grep -A5 "bad_version:" "$target_file" | grep -q "return 1;" \
+    || die "bypass patch failed on $target_file"
+}
+
+_disable_defconfig_check() {
+  [[ -f "./common/build.config.gki" ]] && sed -i 's/check_defconfig//' ./common/build.config.gki
+
+  if grep -q 'name = "kernel_aarch64"' common/BUILD.bazel; then
+    sed -i '/check_defconfig =/d' common/BUILD.bazel
+    sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
+  fi
+}
+
+_run_legacy_build() {
+  BUILD_GKI_ARTIFACTS="" \
+  BUILD_GKI_CERTIFICATION_TOOLS=0 \
+  BUILD_SYSTEM_DLKM=0 \
+  SKIP_VENDOR_BOOT=1 \
+  SKIP_EXT_MODULES=1 \
+  SKIP_CP_KERNEL_HDR=1 \
+  OUT_DIR="$OUT_DIR" \
+  LTO=thin \
+  BUILD_CONFIG=common/build.config.gki.aarch64 \
+  build/build.sh -j"$(nproc)" \
+  CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++"
+}
+
+_run_bazel_build() {
+  tools/bazel build \
+    --config=fast \
+    --config=stamp \
+    --kconfig_check=none \
+    --disk_cache="${HOME}/.cache/bazel" \
+    //common:kernel_aarch64/Image \
+  || tools/bazel build \
+    --config=fast \
+    --config=stamp \
+    --disk_cache="${HOME}/.cache/bazel" \
+    //common:kernel_aarch64/Image
+}
+
+_locate_built_image() {
+  if [[ -f "bazel-bin/common/kernel_aarch64/Image" ]]; then
+    echo "bazel-bin/common/kernel_aarch64/Image"
+  elif [[ -f "${OUT_DIR}/dist/Image" ]]; then
+    echo "${OUT_DIR}/dist/Image"
+  else
+    die "could not find built Image"
+  fi
 }
 
 build_variant() {
@@ -487,58 +604,17 @@ build_variant() {
   log "Building kernel (bypass=${bypass})"
   cd "$KERNEL_DIR"
 
-  if [[ "$bypass" == "true" ]]; then
-    local target_file="common/kernel/module/version.c"
-    sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$target_file"
-    if ! grep -A5 "bad_version:" "$target_file" | grep -q "return 1;"; then
-      echo "ERROR: bypass patch failed on $target_file" >&2
-      exit 1
-    fi
-  fi
-
-  [[ -f "./common/build.config.gki" ]] && sed -i 's/check_defconfig//' ./common/build.config.gki
-
-  # Nonaktifkan check_defconfig Bazel secara permanen agar tidak fail saat ada config tambahan
-  if grep -q 'name = "kernel_aarch64"' common/BUILD.bazel; then
-    sed -i '/check_defconfig =/d' common/BUILD.bazel
-    sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
-  fi
+  [[ "$bypass" == "true" ]] && _apply_bypass_patch
+  _disable_defconfig_check
 
   if [[ -f "build/build.sh" ]]; then
-    BUILD_GKI_ARTIFACTS="" \
-    BUILD_GKI_CERTIFICATION_TOOLS=0 \
-    BUILD_SYSTEM_DLKM=0 \
-    SKIP_VENDOR_BOOT=1 \
-    SKIP_EXT_MODULES=1 \
-    SKIP_CP_KERNEL_HDR=1 \
-    OUT_DIR="$OUT_DIR" \
-    LTO=thin \
-    BUILD_CONFIG=common/build.config.gki.aarch64 \
-    build/build.sh -j"$(nproc)" \
-    CC="ccache clang" CXX="ccache clang++" HOSTCC="ccache clang" HOSTCXX="ccache clang++"
+    _run_legacy_build
   else
-    tools/bazel build \
-      --config=fast \
-      --config=stamp \
-      --kconfig_check=none \
-      --disk_cache="${HOME}/.cache/bazel" \
-      //common:kernel_aarch64/Image || \
-    tools/bazel build \
-      --config=fast \
-      --config=stamp \
-      --disk_cache="${HOME}/.cache/bazel" \
-      //common:kernel_aarch64/Image
+    _run_bazel_build
   fi
 
-  local image_out=""
-  if [[ -f "bazel-bin/common/kernel_aarch64/Image" ]]; then
-    image_out="bazel-bin/common/kernel_aarch64/Image"
-  elif [[ -f "${OUT_DIR}/dist/Image" ]]; then
-    image_out="${OUT_DIR}/dist/Image"
-  else
-    echo "ERROR: could not find built Image" >&2
-    exit 1
-  fi
+  local image_out
+  image_out="$(_locate_built_image)"
 
   if [[ "$bypass" == "true" ]]; then
     cp "$image_out" "${AK3_DIR}/Bypass-Image"
@@ -555,14 +631,17 @@ build_kernel() {
   build_variant "true"
 }
 
+# Stage: post-build
 scan_patch_rejects() {
   log "Scanning for .rej files"
   local rejects_dir="${WORKSPACE}/patch-rejects"
   mkdir -p "$rejects_dir"
-  local rej_count=0
+
+  local rej_count=0 rej rel
   while IFS= read -r rej; do
-    local rel="${rej#"$KERNEL_DIR"/}"
+    rel="${rej#"$KERNEL_DIR"/}"
     [[ "$(basename "$rel")" == "i2c-nomadik.c.rej" ]] && continue
+
     mkdir -p "$(dirname "${rejects_dir}/${rel}")"
     cp "$rej" "${rejects_dir}/${rel}"
     rej_count=$((rej_count + 1))
@@ -579,13 +658,18 @@ scan_patch_rejects() {
 package_output() {
   log "Packaging AnyKernel3 as ${FILE_NAME}.zip"
   mkdir -p "${WORKSPACE}/out"
+
   local zip_path="${WORKSPACE}/out/${FILE_NAME}.zip"
   rm -f "$zip_path"
   ( cd "$AK3_DIR" && zip -r -q -9 "$zip_path" . -x '.git/*' )
   echo "Built: $zip_path"
 }
 
+# main
 main() {
+  parse_args "$@"
+  resolve_custom_branch
+
   echo "============================================================"
   echo " Kinosaki Kernel build — target: ${TARGET} (${VERSION}, branch ${CUSTOM_BRANCH})"
   echo "============================================================"

@@ -17,74 +17,6 @@ By flashing this kernel, **YOU** are choosing to make these modifications. If so
 
 ---
 
-### 🚨 Proceed at your own risk!
-
----
-
-## 🔧 About this build system
-
-Kinosaki Kernel is built from a single consolidated pipeline:
-
-- **`build.sh`** — one script that does the entire build: downloads the AOSP
-  GKI `android16-6.12` source, applies every patch (KernelSU-Next, SUSFS,
-  Baseband Guard, Networking/CIFS/Wireguard, DroidSpaces-OSS, NTSync, unicode
-  fix, misc/BTF configs, branding, dirty-flag cleanup...), and packages an
-  AnyKernel3 zip.
-- **`.github/workflows/build.yml`** — one workflow that runs `build.sh` for
-  the two supported targets.
-
-## 🎯 Supported targets
-
-Only two kernel targets are built — both are `android16-6.12`, they only
-differ in which upstream `kernel/common` branch is used:
-
-| Target | Branch | Output |
-|--------|--------|--------|
-| **6.12**  | `6.12` | `AK3-6.12.38-Kinosaki-Bore-<tanggal><jam>.zip` |
-| **cass**  | `cass` | `AK3-CASS-Kinosaki-Bore-<tanggal><jam>.zip` |
-
-SUSFS is always included — there's no on/off toggle, it's a permanent part
-of the build alongside KernelSU-Next.
-
-## 🛠️ Building locally
-
-```bash
-chmod +x build.sh
-./build.sh --target 6.12   # or: --target cass
-```
-
-Optional flags: `--ksu-branch`, `--susfs-commit`, `--kernel-name`.
-
-## 🛠️ Building via GitHub Actions
-
-Run the **Build Kinosaki Kernel** workflow (`workflow_dispatch`) and choose:
-
-- `targets`: `6.12`, `cass`, or both
-- `release_type`: `Action` (artifacts only), `Pre-Release`, or `Release`
-- optional overrides for the KernelSU-Next branch, SUSFS commit, and
-  branding tag
-
----
-
-## 📋 Installation Instructions
-
-For GKI installation, please follow the official guide:
-
-📖 **[KernelSU Installation Guide](https://kernelsu.org/guide/installation.html)**
-
----
-
-## ✨ Features
-
-- 🔐 **KernelSU-Next**: A root solution for Android GKI devices that works in kernel mode and grants root permission to userspace applications directly in kernel space
-- 🛡️ **SUSFS**: An addon root hiding kernel patches and userspace module for KernelSU (always enabled)
-- 🛡️ **Baseband Guard (BBG)**: Baseband/modem partition protection
-- 🌐 **Networking**: IP Set, advanced TCP congestion control (incl. BBR), FQ/CAKE qdiscs, CIFS, Wireguard
-- 🗂️ **DroidSpaces-OSS**: namespace/SysV IPC support patches
-- 🖱️ **NTSync**: NT synchronization primitives for Wine/Proton-style workloads
-
----
-
 ## 🏆 Credits
 
 - 🔐 **KernelSU**: Developed by [tiann](https://github.com/tiann/KernelSU)
@@ -98,12 +30,6 @@ For GKI installation, please follow the official guide:
 - 📦 **AnyKernel3**: [Cartethyiaaa/AnyKernel3](https://github.com/Cartethyiaaa/AnyKernel3)
 
 🙏 Special thanks to the open-source community for their contributions!
-
----
-
-## 💬 Support
-
-If you encounter any issues or need help, feel free to open an issue in this repository.
 
 ---
 
