@@ -338,13 +338,29 @@ _ksu_stamp_version() {
 # non-static declaration"). Applied via a patch file (not sed) so that if
 # upstream KernelSU-Next reformats the file, this fails loudly instead of
 # silently no-op'ing.
+#
+# IMPORTANT: KernelSU-Next's setup.sh places (copies, not always symlinks)
+# the driver source under kernel/common/drivers/kernelsu/feature/ — that is
+# the file the compiler actually reads. The raw checkout at
+# KernelSU-Next/kernel/feature/ may be a separate copy that setup.sh no
+# longer touches once it's been placed into common/. Patch the compiled
+# location first; fall back to the raw checkout only if that path doesn't
+# exist (e.g. a different setup.sh version that does symlink instead).
 _ksu_fix_selinux_hide_linkage() {
   local patch_file="${PATCH_DIR}/kernelsu-static.patch"
   [[ -f "$patch_file" ]] || die "${patch_file} not found"
 
-  log "Applying kernelsu-static.patch"
-  cd "${KERNEL_DIR}/KernelSU-Next"
-  patch -p1 < "$patch_file"
+  local hide_file="${KERNEL_DIR}/common/drivers/kernelsu/feature/selinux_hide.c"
+  if [[ ! -f "$hide_file" ]]; then
+    hide_file="${KERNEL_DIR}/KernelSU-Next/kernel/feature/selinux_hide.c"
+  fi
+  [[ -f "$hide_file" ]] || die "selinux_hide.c not found in any known location"
+
+  log "Applying kernelsu-static.patch to ${hide_file#"${KERNEL_DIR}"/}"
+  # Pass the target file explicitly (-p0 + filename) instead of relying on
+  # the a/ b/ paths inside the diff, so this works no matter which of the
+  # two locations above actually held the file.
+  patch -p0 "$hide_file" < "$patch_file"
 }
 
 setup_kernelsu() {
