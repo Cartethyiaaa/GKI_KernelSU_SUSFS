@@ -339,13 +339,20 @@ _ksu_stamp_version() {
 # upstream KernelSU-Next reformats the file, this fails loudly instead of
 # silently no-op'ing.
 #
-# IMPORTANT: KernelSU-Next's setup.sh places (copies, not always symlinks)
-# the driver source under kernel/common/drivers/kernelsu/feature/ — that is
-# the file the compiler actually reads. The raw checkout at
-# KernelSU-Next/kernel/feature/ may be a separate copy that setup.sh no
-# longer touches once it's been placed into common/. Patch the compiled
-# location first; fall back to the raw checkout only if that path doesn't
-# exist (e.g. a different setup.sh version that does symlink instead).
+# IMPORTANT: KernelSU-Next's setup.sh places (copies, or in some versions
+# symlinks) the driver source under kernel/common/drivers/kernelsu/feature/
+# — that is the file the compiler actually reads. The raw checkout at
+# KernelSU-Next/kernel/feature/ may be a separate copy setup.sh no longer
+# touches once it's been placed into common/. Patch the compiled location
+# first; fall back to the raw checkout only if that path doesn't exist.
+#
+# IDEMPOTENCY: upstream KernelSU-Next has, at times, shipped this fix
+# itself. A plain `patch` against an already-fixed file prompts
+# "Reversed (or previously applied) patch detected! Assume -R? [n]" — with
+# no interactive stdin (CI) that defaults to "no" and patch exits non-zero,
+# killing the build over a fix that's already present. We dry-run first to
+# tell "already applied" (skip, not an error) apart from a genuine mismatch
+# (fail loud, as intended).
 _ksu_fix_selinux_hide_linkage() {
   local patch_file="${PATCH_DIR}/kernelsu-static.patch"
   [[ -f "$patch_file" ]] || die "${patch_file} not found"
@@ -356,11 +363,19 @@ _ksu_fix_selinux_hide_linkage() {
   fi
   [[ -f "$hide_file" ]] || die "selinux_hide.c not found in any known location"
 
-  log "Applying kernelsu-static.patch to ${hide_file#"${KERNEL_DIR}"/}"
-  # Pass the target file explicitly (-p0 + filename) instead of relying on
-  # the a/ b/ paths inside the diff, so this works no matter which of the
-  # two locations above actually held the file.
-  patch -p0 "$hide_file" < "$patch_file"
+  local rel_path="${hide_file#"${KERNEL_DIR}"/}"
+  log "Checking selinux_hide.c static-linkage patch state (${rel_path})"
+
+  local dry_run_output
+  if dry_run_output=$(patch -p0 --forward --dry-run "$hide_file" < "$patch_file" 2>&1); then
+    log "Applying kernelsu-static.patch to ${rel_path}"
+    patch -p0 --forward "$hide_file" < "$patch_file"
+  elif grep -q "Reversed (or previously applied)" <<<"$dry_run_output"; then
+    echo "selinux_hide.c already has the static-linkage fix upstream — skipping patch"
+  else
+    echo "$dry_run_output" >&2
+    die "kernelsu-static.patch failed to apply to ${rel_path}"
+  fi
 }
 
 setup_kernelsu() {
