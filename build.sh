@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 #
 # Kinosaki Kernel build script
-# Builds a GKI 6.12 kernel with KernelSU-Next, Baseband Guard,
+# Builds a GKI 6.12 kernel (android16) with KernelSU-Next, Baseband Guard,
+# DroidSpaces, NTSync and assorted config patches, then packages AnyKernel3.
 #
+# Usage: ./build.sh --target <6.12|cass> [options]
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
 # Constants
+# ---------------------------------------------------------------------------
+
 readonly CUSTOM_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10"
 readonly ANDROID_VERSION="android16"
 readonly KERNEL_VERSION="6.12"
@@ -24,7 +29,9 @@ readonly AK3_DIR="${WORKSPACE}/AnyKernel3"
 readonly BOT_NAME="kinosaki-bot"
 readonly BOT_EMAIL="kinosaki-bot@users.noreply.github.com"
 
+# ---------------------------------------------------------------------------
 # CLI parsing
+# ---------------------------------------------------------------------------
 
 TARGET=""
 KSU_BRANCH=""
@@ -64,7 +71,10 @@ parse_args() {
   fi
 }
 
+# ---------------------------------------------------------------------------
 # Logging helpers
+# ---------------------------------------------------------------------------
+
 log()  { echo -e "\n\033[1;36m==> $*\033[0m"; }
 warn() { echo -e "\033[1;33m[warn] $*\033[0m"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -76,7 +86,10 @@ on_error() {
 }
 trap 'on_error $LINENO' ERR
 
-# Derived
+# ---------------------------------------------------------------------------
+# Derived / runtime globals (populated as the build progresses)
+# ---------------------------------------------------------------------------
+
 CUSTOM_BRANCH=""
 BUILD_EPOCH=""
 KERNEL_NAME_TAG=""
@@ -93,7 +106,10 @@ resolve_custom_branch() {
   fi
 }
 
-# kconfig helper
+# ---------------------------------------------------------------------------
+# kconfig helper — merges "KEY=value" / "KEY" lines into gki_defconfig
+# ---------------------------------------------------------------------------
+
 apply_kconfig() {
   local defconfig="${KERNEL_DIR}/common/arch/arm64/configs/gki_defconfig"
   [[ -f "$defconfig" ]] || die "gki_defconfig not found at ${defconfig}"
@@ -121,7 +137,10 @@ apply_kconfig() {
   done <<< "$1"
 }
 
+# ---------------------------------------------------------------------------
 # Stage: environment setup
+# ---------------------------------------------------------------------------
+
 setup_build_environment() {
   log "Setting up build environment"
 
@@ -147,7 +166,10 @@ setup_build_environment() {
   sudo apt-get install -y -qq dwarves libelf-dev
 }
 
+# ---------------------------------------------------------------------------
 # Stage: kernel source
+# ---------------------------------------------------------------------------
+
 _repo_init() {
   local formatted_branch="$1"
   repo init -u https://android.googlesource.com/kernel/manifest \
@@ -209,7 +231,10 @@ download_kernel() {
   _clone_custom_common
 }
 
-# Stage: build metadata
+# ---------------------------------------------------------------------------
+# Stage: build metadata (timestamp, branding tag, output file name)
+# ---------------------------------------------------------------------------
+
 set_build_timestamp() {
   log "Setting build timestamp / branding tag"
 
@@ -252,7 +277,10 @@ extract_sublevel_and_name() {
   echo "File name: $FILE_NAME"
 }
 
-# Stage: toolchain
+# ---------------------------------------------------------------------------
+# Stage: toolchain / Makefile fixes
+# ---------------------------------------------------------------------------
+
 apply_kernel_fixes() {
   log "Applying kernel fixes"
   cd "${KERNEL_DIR}/common"
@@ -276,7 +304,10 @@ apply_kernel_fixes() {
   fi
 }
 
+# ---------------------------------------------------------------------------
 # Stage: KernelSU-Next
+# ---------------------------------------------------------------------------
+
 _ksu_checkout_branch() {
   local ksu_repo="https://github.com/KernelSU-Next/KernelSU-Next.git"
   local ksu_input="${KSU_BRANCH:-next}"
@@ -301,6 +332,12 @@ _ksu_stamp_version() {
   sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
 }
 
+# Fixes the linkage mismatch in selinux_hide.c: forward declarations are
+# non-static (extern) while the actual definitions further down the file
+# are static, which GCC/Clang rejects ("static declaration follows
+# non-static declaration"). Applied via a patch file (not sed) so that if
+# upstream KernelSU-Next reformats the file, this fails loudly instead of
+# silently no-op'ing.
 _ksu_fix_selinux_hide_linkage() {
   local patch_file="${PATCH_DIR}/kernelsu-static.patch"
   [[ -f "$patch_file" ]] || die "${patch_file} not found"
@@ -311,10 +348,10 @@ _ksu_fix_selinux_hide_linkage() {
 }
 
 setup_kernelsu() {
-  log "Setting up KernelSU-Next"
+  log "Setting up KernelSU-Next (official next)"
   cd "$KERNEL_DIR"
 
-  curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
+  curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
 
   _ksu_checkout_branch
 
@@ -325,7 +362,10 @@ setup_kernelsu() {
   echo "KSU version: $KSU_VERSION (tag: $KSU_GIT_TAG)"
 }
 
+# ---------------------------------------------------------------------------
 # Stage: Baseband Guard
+# ---------------------------------------------------------------------------
+
 setup_bbg() {
   log "Setting up Baseband Guard"
   cd "$KERNEL_DIR"
@@ -341,7 +381,10 @@ setup_bbg() {
   apply_kconfig "CONFIG_BBG=y"
 }
 
+# ---------------------------------------------------------------------------
 # Stage: networking configs
+# ---------------------------------------------------------------------------
+
 setup_networking() {
   log "Setting up networking configs"
 
@@ -399,7 +442,10 @@ EOF
   sed -i '/"fs\/netfs\/netfs\.ko",/d' modules.bzl
 }
 
+# ---------------------------------------------------------------------------
 # Stage: DroidSpaces-OSS
+# ---------------------------------------------------------------------------
+
 setup_droidspaces() {
   log "Setting up DroidSpaces-OSS"
   cd "$WORKSPACE"
@@ -434,7 +480,10 @@ EOF
 )"
 }
 
+# ---------------------------------------------------------------------------
 # Stage: NTSync
+# ---------------------------------------------------------------------------
+
 setup_ntsync() {
   log "Applying NTSync patches"
   cd "${KERNEL_DIR}/common"
@@ -449,14 +498,23 @@ setup_ntsync() {
   apply_kconfig "CONFIG_NTSYNC=y"
 }
 
-# Stage: misc patches
-_kernel_version_at_least() {
-  [[ "$(printf '%s\n' "$KERNEL_VERSION" "$1" | sort -V | head -n1)" == "$1" ]]
+# ---------------------------------------------------------------------------
+# Stage: misc patches (ptrace, unicode, extra kconfig)
+# ---------------------------------------------------------------------------
+
+_kernel_version_le() {
+  # Returns success if $KERNEL_VERSION <= $1 (per `sort -V`).
+  # NOTE: named _le (less-or-equal), not _at_least — the gki_ptrace patch
+  # and the unicode-fix variant selection both key off "is this kernel
+  # <= 5.16", not ">= 5.16". Getting this backwards means gki_ptrace.patch
+  # (which touches tracehook.h, removed from the kernel well before 6.12)
+  # gets applied to kernels it was never meant for.
+  [[ "$(printf '%s\n' "$KERNEL_VERSION" "$1" | sort -V | head -n1)" == "$KERNEL_VERSION" ]]
 }
 
 apply_ptrace_patch() {
   log "Checking ptrace patch (kernel ${KERNEL_VERSION})"
-  if _kernel_version_at_least "5.16"; then
+  if _kernel_version_le "5.16"; then
     cd "${KERNEL_DIR}/common"
     patch -p1 -F3 < "${WORKSPACE}/kernel_patches/gki_ptrace.patch"
   else
@@ -467,7 +525,7 @@ apply_ptrace_patch() {
 apply_unicode_fix() {
   log "Applying unicode fix patch"
   cd "${KERNEL_DIR}/common"
-  if _kernel_version_at_least "5.16"; then
+  if _kernel_version_le "5.16"; then
     patch -p1 --forward < "${WORKSPACE}/kernel_patches/common/unicode_bypass_fix_6.1-.patch"
   else
     patch -p1 --forward < "${WORKSPACE}/kernel_patches/common/unicode_bypass_fix_6.1+.patch"
@@ -476,6 +534,7 @@ apply_unicode_fix() {
 
 setup_misc_and_btf() {
   log "Setting up misc kernel configs"
+  # CONFIG_ADIOS=y dihapus karena tidak ada driver/patch di repo upstream
   apply_kconfig "$(cat <<'EOF'
 CONFIG_OVERLAY_FS=y
 CONFIG_TMPFS_XATTR=y
@@ -492,7 +551,10 @@ EOF
 )"
 }
 
-# Stage: branding
+# ---------------------------------------------------------------------------
+# Stage: branding, protected exports, dirty flag
+# ---------------------------------------------------------------------------
+
 apply_kernel_branding() {
   log "Applying kernel branding: $KERNEL_NAME_TAG"
   cd "${KERNEL_DIR}/common"
@@ -544,7 +606,10 @@ clean_kernel_flags() {
     commit -m "Kinosaki: clean dirty flag" --quiet || true
 }
 
+# ---------------------------------------------------------------------------
 # Stage: build
+# ---------------------------------------------------------------------------
+
 _apply_bypass_patch() {
   local target_file="common/kernel/module/version.c"
   sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$target_file"
@@ -555,6 +620,8 @@ _apply_bypass_patch() {
 _disable_defconfig_check() {
   [[ -f "./common/build.config.gki" ]] && sed -i 's/check_defconfig//' ./common/build.config.gki
 
+  # Nonaktifkan check_defconfig Bazel secara permanen agar tidak fail saat
+  # ada config tambahan.
   if grep -q 'name = "kernel_aarch64"' common/BUILD.bazel; then
     sed -i '/check_defconfig =/d' common/BUILD.bazel
     sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
@@ -631,7 +698,10 @@ build_kernel() {
   build_variant "true"
 }
 
-# Stage: post-build
+# ---------------------------------------------------------------------------
+# Stage: post-build (patch rejects, packaging)
+# ---------------------------------------------------------------------------
+
 scan_patch_rejects() {
   log "Scanning for .rej files"
   local rejects_dir="${WORKSPACE}/patch-rejects"
@@ -665,7 +735,10 @@ package_output() {
   echo "Built: $zip_path"
 }
 
+# ---------------------------------------------------------------------------
 # main
+# ---------------------------------------------------------------------------
+
 main() {
   parse_args "$@"
   resolve_custom_branch
